@@ -1,0 +1,66 @@
+## The task
+I'll show you the contents of a{file_extension} file. Please list all classes and interfaces that are implemented in this file, and for each class or interface please provide:
+{field_descriptions}
+
+## Sealed classes and interfaces, or enums
+For sealed classes and interfaces please list all the defined sub-classes and for each explain how each one is being used in other classes and what effect does it cause as a summary of the original sealed class or interface.
+For enums in summary please list all values and explain how each is being used in other classes and what effect does it cause.
+
+Examples for class:
+```
+sealed class ExampleState {{
+    object ExampleState01: ExampleState
+    data class ExampleState02(val content: String): ExampleState
+}}
+```
+
+Good example (sub-classes explained in the summary, explaining the effects):
+```
+{{
+      "simple_classname": "ExampleState",
+      "full_classname": "com.example.mosconiremoteandroid.data.CommState",
+      "summary": "ExampleState is a sealed interface that defines the possible states for some example. ExampleState01 causes the ViewModel to show example1, ExampleState02 causes the ViewModel to show example2",
+      "category": "Data",
+      "methods": [],
+      "variables": []
+    }},
+```
+Wrong example (sub-classes defined as separate classes, explaining only the name):
+```
+{{
+      "simple_classname": "ExampleState",
+      "full_classname": "com.example.ExampleState",
+      "summary": "ExampleState is a sealed interface that defines the possible states for some example.",
+      "category": "Data",
+      "methods": [],
+      "variables": []
+    }},
+    {{
+      "simple_classname": "ExampleState01",
+      "full_classname": "com.example.ExampleState.ExampleState01",
+      "summary": "ExampleState01 is a first state of ExampleState",
+      "category": "Data",
+      "methods": [],
+      "variables": []
+    }},
+    {{
+      "simple_classname": "ExampleState02",
+      "full_classname": "com.example.ExampleState.ExampleState02",
+      "summary": "ExampleState02 is a second state of ExampleState",
+      "category": "Data",
+      "methods": [],
+      "variables": []
+    }},
+```
+
+## Project context:
+{projectcontext}
+
+## File name:
+{filename}
+
+## Dependencies and usages context:
+{filecontext}
+
+## File content
+{content}

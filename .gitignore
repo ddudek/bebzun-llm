@@ -1,0 +1,33 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Input directory
+input/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environment directories
+venv/
+env/
+.env/
+
+# Database
+*.sqlite3
+*.db
+
+# Logs
+*.log
+
+# Editor specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+CLAUDE.md

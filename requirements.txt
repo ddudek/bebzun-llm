@@ -1,0 +1,6 @@
+ollama
+pydantic
+tree-sitter
+tree-sitter-kotlin
+tree-sitter-java
+rank_bm25

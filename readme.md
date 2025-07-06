@@ -1,0 +1,202 @@
+# Codebase knowledge context for LLMs
+
+The project explores a different approach to context engineering for large codebases. Instead of feeding raw source code to LLMs, this project focuses on heavy pre-processing of codebase files to create summarizations and build a knowledge base of the entire project that's easy to lookup and query.
+
+It currently supports my daily work - Android, so these languages:
+- Java
+- Kotlin
+
+**The main goal:** 
+Maximize LLM context efficiency by providing pre-processed, contextual summaries rather than raw code. This allows smaller LLMs (e.g. 8-32b models with Ollama, MLX-LM, etc.) to effectively understand and work with huge, poorly-written codebases that would otherwise saturate context quickly and cause issues with finding relevant code.
+
+## Core Flow: Context Engineering Through Pre-Processing
+
+```
+[Raw Source Code] 
+    ↓
+[Static Analysis] → Extract class structures, methods, dependencies (Tree sitter) → preprocess.json
+    ↓
+[Contextual Processing] → LLM processes each class with:
+    │                      • Usage patterns from other classes  
+    │                      • Already processed dependency class summaries
+    │                      • Method and variable contexts
+    │                      • Create summaries of class content, usages, features, methods, properties
+    │                   → final.json
+    ↓
+[Knowledge Base] → LLM summaries + vector embeddings
+    ↓  
+[Retrieval] → Vector similarity search + BM25
+    ↓  
+[Interactive Query] → Simple RAG-based chat with pre-processed knowledge
+```
+
+## Features
+- **Context-Engineered Summaries**: LLM receives dependency information and usage patterns for each class
+- **Small-LLM Optimization**: Pre-processed summaries for efficient context usage. Supports Ollama, MLX-LM, with e.g. Qwen3 14b, Gemma3 etc. Also added Anthropic API for external provider.
+- **Interactive Knowledge Query**: RAG-based Q&A system with semantic search
+- **Dependency-Order Processing**: Files processed in optimal order for maximum context
+- **Incremental Processing**: Skip already processed files for efficiency
+- **Vector-Based Search**: Find relevant code using natural language queries
+
+## Quick Start
+
+### 1. Installation
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Configuration
+Create a configuration file at `<your-project>/.ai-agent/config.json`:
+
+```json
+{
+  "source_dirs": ["app/src/main/java"],
+  "llm": {
+    "mode": "ollama",
+    "ollama": {
+      "url": "http://localhost:11434",
+      "model": "gemma3:12b",
+      "temperature": 0.7
+    }
+  }
+}
+```
+
+### 3. Run Analysis
+```bash
+# Step 1: Static Analysis
+python static_analysis.py -i /path/to/your/project
+
+# Step 2: Knowledge Building
+python build_knowledge.py -i /path/to/your/project -m Final
+
+# Step 3: Interactive Chat
+python -m interact.chat /path/to/your/project
+```
+
+## Usage
+
+### Static Analysis
+Analyzes Java and Kotlin source files to extract class structures, methods, and dependencies.
+
+```bash
+python static_analysis.py -i <input_directory> [-v]
+```
+
+**Options:**
+- `-i, --input-dir`: Directory containing Java/Kotlin source files (required)
+- `-v, --verbose`: Enable verbose output
+
+**Output:** `.ai-agent/preprocess.json` containing class structures and dependencies
+
+### Knowledge Building
+Uses LLM to generate intelligent summaries of classes and methods with contextual information.
+
+```bash
+python build_knowledge.py -i <input_directory> -m <mode> [-filter <pattern>]
+```
+
+**Options:**
+- `-i, --input-dir`: Project directory (required)
+- `-m, --mode`: Processing mode - `Pre`, `Final`, or `Embedd`
+- `-filter`: Filter files by name (prefix with `!` to exclude)
+
+**Processing Modes:**
+- `Final`: LLM summarization with dependency context
+- `Embedd`: Generate embeddings for semantic search
+
+**Output:** `.ai-agent/final.json` with LLM summaries and embeddings database
+
+### Interactive Chat
+Provides an interactive Q&A interface with access to analyzed codebase.
+
+```bash
+python -m interact.chat <project_directory>
+```
+
+**Features:**
+- Natural language queries about code
+- Semantic search across codebase
+- Context-aware responses using RAG
+- File content retrieval and analysis
+
+## Configuration
+
+### LLM Backend Options
+
+**Ollama (Local):**
+```json
+{
+  "llm": {
+    "mode": "ollama",
+    "ollama": {
+      "url": "http://localhost:11434",
+      "model": "gemma3:12b",
+      "temperature": 0.7
+    }
+  }
+}
+```
+
+**MLX (Apple Silicon):**
+```json
+{
+  "llm": {
+    "mode": "mlx",
+    "mlx": {
+      "model": "mlx-community/gemma-3-12b-it-qat-4bit",
+      "temperature": 0.7
+    }
+  }
+}
+```
+
+**Anthropic Claude:**
+```json
+{
+  "llm": {
+    "mode": "anthropic",
+    "anthropic": {
+      "key": "YOUR_ANTHROPIC_API_KEY",
+      "model": "claude-3-5-sonnet-latest"
+    }
+  }
+}
+```
+
+### Source Directories
+Specify which directories contain your source code:
+
+```json
+{
+  "source_dirs": [
+    "app/src/main/java",
+    "library/src/main/kotlin"
+  ]
+}
+```
+
+## Output Files
+
+The system uses simple, json-based storage, and generates several output files in the `.ai-agent/` directory:
+
+- `config.json`: Configuration file (user-provided)
+- `preprocess.json`: Static analysis results
+- `final.json`: LLM summaries and processed data
+- `embeddings.json`: Vector embeddings file
+
+## Requirements
+
+- Python 3.7+
+- Dependencies listed in `requirements.txt`
+- LLM backend (Ollama server, MLX-LM setup, or Anthropic API)
+
+## Testing
+
+```bash
+# Run Java parser tests
+python -m unittest static_analysis.tests.test_java_parser -v
+
+# Run Kotlin parser tests  
+python -m unittest static_analysis.tests.test_kotlin_parser -v
+```
