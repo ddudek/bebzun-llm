@@ -19,7 +19,7 @@ class AnthropicConfig(BaseModel):
 class EmbeddingsConfig(BaseModel):
     model: str = "nomic-embed-text"
     vector_dimension: int = 768
-    execution: Literal['ollama'] = 'ollama'
+    execution: Literal['mlx', 'ollama'] = 'ollama'
 
 class LlmConfig(BaseModel):
     mode: Literal['mlx', 'ollama', 'anthropic']

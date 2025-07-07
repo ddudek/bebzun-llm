@@ -42,9 +42,9 @@ class Memory:
             memory_content += "## Class Summaries\n"
             
             raw_content = ""
-            for class_summary in self.classes.values():
+            for idx, class_summary in enumerate(self.classes.values()):
                 file_path = class_summary.file
-                raw_content += f"\nClass: {class_summary.class_summary.full_classname}\nFile with implementation: {file_path}\n{class_summary.class_summary.describe()}\n"
+                raw_content += f"\nItem #{idx}: Class: {class_summary.class_summary.full_classname}\nFile with implementation: {file_path}\n{class_summary.class_summary.describe()}\n"
             
             memory_content += raw_content
             memory_content += "\n"
@@ -52,8 +52,8 @@ class Memory:
         if self.files:
             memory_content += "## File Contents\n"
             raw_content = ""
-            for (file_path, file_content) in self.files.items():
-                raw_content += f"File: {file_path}\n```\n{file_content}\n```\n"
+            for idx, (file_path, file_content) in enumerate(self.files.items()):
+                raw_content += f"\n Item #{len(self.classes) + idx}: File: {file_path}\n```\n{file_content}\n```\n"
             memory_content += raw_content
             memory_size += len(raw_content)
         

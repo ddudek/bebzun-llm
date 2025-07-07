@@ -580,9 +580,6 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
             for question in class_summary.questions:
                 filecontext += f"{question}\n"
         
-        # Store embeddings for the class
-        metadata = {"file_path": rel_path}
-        
         # Get file's last modification time from the FileInfo object if available
         timestamp = None
         # Try to find the matching FileInfo object for this file
@@ -614,11 +611,14 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
             for variable_entry in class_summary.variables:
                 embedd_summary+=(f"\n Property `{variable_entry.variable_name}`: {variable_entry.variable_summary}")
 
-        embeddings.store_class_description_embeddings(class_summary.full_classname, embedd_summary, filecontext, metadata, timestamp)
+        embeddings.store_class_description_embeddings(class_summary.full_classname, embedd_summary, filecontext, rel_path, timestamp)
         
         # Print progress
         if processed % 10 == 0:
             print(f"Progress: {processed}/{total_classes} classes processed")
+
+    # Save to file
+    embeddings.store_all_classes()
 
 llm_execution = None
 

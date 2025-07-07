@@ -3,13 +3,28 @@ import os
 import json
 import ollama
 import mlx.core as mx
+
+from dataclasses import dataclass, asdict
 from core.config.config import Config, EmbeddingsConfig
+from mlx_embeddings.utils import load
+
+@dataclass
+class EmbeddingEntry:
+    full_classname: str
+    rel_path: str
+    embedding: List[float]
+    last_modified_at: str
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
 
 class Embeddings:
     def __init__(self, config: Config):
         self.storage_path: Optional[str] = None
-        self.data: List[Dict] = []
+        self.data: Dict[str, EmbeddingEntry] = {}
         self.config = config
+        self.mlx_model = None
+        self.mlx_tokenizer = None
         
         # Handle missing embeddings config gracefully
         embeddings_config = getattr(config, 'embeddings', None)
@@ -35,18 +50,19 @@ class Embeddings:
                 with open(self.storage_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                     if content:
-                        self.data = json.loads(content)
+                        loaded_data = json.loads(content)
+                        self.data = {k: EmbeddingEntry(**v) for k, v in loaded_data.items()}
                     else:
-                        self.data = []
+                        self.data = {}
                 print(f"Successfully loaded {len(self.data)} embeddings from {self.storage_path}")
             else:
-                self.data = []
+                self.data = {}
                 print(f"No existing embeddings file found. A new one will be created at {self.storage_path}")
             
             return True
         except Exception as e:
             print(f"Error initializing embeddings storage: {str(e)}")
-            self.data = []
+            self.data = {}
             return False
 
     def is_loaded(self) -> bool:
@@ -83,13 +99,31 @@ class Embeddings:
                     print(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
                 
                 return embeddings
+            elif embeddings_config.execution == "mlx":
+                if self.mlx_model is None or self.mlx_tokenizer is None:
+                    print(f"Loading mlx model: {self.embedding_model}")
+                    self.mlx_model, self.mlx_tokenizer = load(self.embedding_model)
+
+                input_ids = self.mlx_tokenizer.encode(text, return_tensors="mlx")
+                outputs = self.mlx_model(input_ids)
+                embeddings = outputs.text_embeds.squeeze().tolist()
+
+                if len(embeddings) != self.vector_dimension:
+                    print(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
+                
+                return embeddings
             else:
                 raise ValueError(f"Unsupported embeddings execution method: {embeddings_config.execution}")
         except Exception as e:
             print(f"Error generating embeddings: {str(e)}")
             return []
+        
+    def store_all_classes(self):
+        with open(self.storage_path, 'w', encoding='utf-8') as f:
+            data_to_store = {k: v.to_dict() for k, v in self.data.items()}
+            json.dump(data_to_store, f, indent=2)
 
-    def store_class_description_embeddings(self, classname: str, summary: str, filecontext: str, metadata: dict, timestamp: str):
+    def store_class_description_embeddings(self, classname: str, summary: str, filecontext: str, rel_path: str, timestamp: str):
         """
         Store embeddings in the JSON file
         
@@ -97,7 +131,6 @@ class Embeddings:
             classname: The full class name
             summary: The class summary
             filecontext: The file content
-            metadata: Additional metadata
         """
         print(f"Store embeddings for {classname}:")
         
@@ -105,32 +138,21 @@ class Embeddings:
         text_to_embed = f"{summary}\n{filecontext}" if filecontext else summary
         print(f"Text to embedd:\n ------- \n{text_to_embed}\n -------")
         
-        # Add classname to metadata
-        metadata["classname"] = classname
-        
         try:
-            # Generate embeddings using ollama
-            embedding_vector = self.generate_embeddings(text_to_embed)
+            # Generate embeddings
+            embedding_vector = self.generate_embeddings("search_document: " + text_to_embed)
             
             if not embedding_vector:
                 print(f"Failed to generate embeddings for {classname}")
                 return
             
-            # Remove existing entry for the classname if it exists
-            self.data = [entry for entry in self.data if entry.get("metadata", {}).get("classname") != classname]
-
-            # Add new entry
-            entry = {
-                "full_classname": classname,
-                "metadata": metadata,
-                "embedding": embedding_vector,
-                "last_modified_at": timestamp
-            }
-            self.data.append(entry)
-            
-            # Save to file
-            with open(self.storage_path, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, indent=2)
+            entry = EmbeddingEntry(
+                full_classname=classname,
+                rel_path=rel_path,
+                embedding=embedding_vector,
+                last_modified_at=timestamp
+            )
+            self.data[classname] = entry
             
             print(f"Successfully stored embeddings for {classname} in {self.storage_path}")
         except Exception as e:
@@ -153,7 +175,7 @@ class Embeddings:
                 return []
 
             # Generate embeddings for the query
-            query_embedding = self.generate_embeddings(query)
+            query_embedding = self.generate_embeddings("search_query: " + query)
             
             if not query_embedding:
                 print(f"Failed to generate embeddings for query")
@@ -161,7 +183,8 @@ class Embeddings:
             
             query_embedding_mx = mx.array(query_embedding)
 
-            stored_embeddings = [entry["embedding"] for entry in self.data]
+            stored_entries = list(self.data.values())
+            stored_embeddings = [entry.embedding for entry in stored_entries]
             if not stored_embeddings:
                 return []
             stored_embeddings_mx = mx.array(stored_embeddings)
@@ -181,8 +204,9 @@ class Embeddings:
             results = []
             for i in range(min(limit, len(sorted_indices))):
                 idx = sorted_indices[i].item()
+                entry = stored_entries[idx]
                 results.append({
-                    "metadata": self.data[idx]["metadata"],
+                    "item": entry,
                     "score": float(similarities[idx].item())
                 })
             
@@ -192,7 +216,7 @@ class Embeddings:
             print(f"Error searching for similar documents: {str(e)}")
             return []
 
-    def get_all_documents(self) -> List[Dict]:
+    def get_all_documents(self) -> Dict[str, EmbeddingEntry]:
         """
         Retrieve all documents from the storage.
         
@@ -203,9 +227,4 @@ class Embeddings:
             print("Embeddings storage not available, cannot retrieve documents")
             return []
         
-        return [
-            {
-                "metadata": entry["metadata"]
-            }
-            for entry in self.data
-        ]
+        return self.data

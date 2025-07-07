@@ -5,6 +5,7 @@ from knowledge.model import ClassDescription
 from typing import Dict, Any, Tuple
 from interact.memory.memory import Memory
 from interact.chat_state import ChatState
+from knowledge.embeddings import EmbeddingEntry
 
 class SearchKnowledgeTool:
     name: str = "search_knowledge_tool"
@@ -15,19 +16,19 @@ class SearchKnowledgeTool:
                         "Example: \n"
                         "```\n"
                         "<search_knowledge_tool>\n"
-                        "<query_embeddings>How is flight data updated?</query_embeddings>\n"
-                        "<query_bm25>flight data update</query_bm25>\n"
+                        "<query_embeddings>How frequently is data updated?</query_embeddings>\n"
+                        "<query_bm25>data update frequency interval</query_bm25>\n"
                         "</search_knowledge_tool>\n"
                         "```")
     
     def __init__(self, embeddings: Embeddings, knowledge_store: KnowledgeStore):
         self.embeddings = embeddings
         self.knowledge_store = knowledge_store
-        self.documents = self.embeddings.get_all_documents()
+        self.documents = list(self.embeddings.get_all_documents().values())
         
         corpus_for_bm25 = []
         for doc in self.documents:
-            classname = doc.get("metadata", {}).get("classname")
+            classname = doc.full_classname
             summary = ""
             if classname:
                 class_info = self.knowledge_store.get_class_description(classname)
@@ -59,7 +60,7 @@ class SearchKnowledgeTool:
             
             if not query_embeddings or not query_bm25:
                 print(f"Empty query provided")
-                return "Error: Please provide both 'query_embeddings' and 'query_bm25'.", {}
+                return "Error: Please provide both 'query_embeddings' and 'query_bm25'."
             
             # Vector search
             vector_results = self.embeddings.search_similar(query_embeddings, limit=5)
@@ -79,8 +80,9 @@ class SearchKnowledgeTool:
             bm25_results = []
             for i, score in enumerate(normalized_scores):
                 if score > 0 and i < len(self.documents):
+                    item = self.documents[i]
                     bm25_results.append({
-                        "metadata": self.documents[i]["metadata"],
+                        "item": item,
                         "score": score
                     })
             
@@ -92,10 +94,11 @@ class SearchKnowledgeTool:
 
             # Process vector results
             for result in vector_results:
-                classname = result["metadata"].get("classname", "Unknown")
+                item: EmbeddingEntry = result["item"]
+                classname = item.full_classname
                 if classname not in combined_results:
                     combined_results[classname] = {
-                        "metadata": result["metadata"],
+                        "item": item,
                         "vector_score": 0.0,
                         "bm25_score": 0.0,
                     }
@@ -103,10 +106,11 @@ class SearchKnowledgeTool:
 
             # Process BM25 results
             for result in bm25_results:
-                classname = result["metadata"].get("classname", "Unknown")
+                item: EmbeddingEntry = result["item"]
+                classname = item.full_classname
                 if classname not in combined_results:
                     combined_results[classname] = {
-                        "metadata": result["metadata"],
+                        "item": item,
                         "vector_score": 0.0,
                         "bm25_score": 0.0,
                     }
@@ -124,14 +128,14 @@ class SearchKnowledgeTool:
 
             if not sorted_results:
                 print(f"No results found for queries.")
-                return "No relevant context found for your query.", {}
+                return "No relevant context found for your query."
 
             classes_added_to_memory = []
 
             print("--- Combined & Re-ranked Results ---")
             for i, result in enumerate(sorted_results, 1):
-                metadata = result["metadata"]
-                classname = metadata.get("classname", "Unknown")
+                item = result["item"]
+                classname = item.full_classname
                 
                 class_info = self.knowledge_store.get_class_description_extended(classname)
                 
@@ -158,16 +162,15 @@ class SearchKnowledgeTool:
                 chat_state.memory.add_class(classname, class_info)
 
             chat_state.search_used_count += 1
-            observation = "Observation from search_knowledge_tool:\nClasses added to the memory:\n" + "\n".join(classes_added_to_memory)
+            observation = f"Observation from {self.name}:\nClasses added to the memory:\n" + "\n".join(classes_added_to_memory)
             
             print(f"Found {len(classes_added_to_memory)} results")
             print(observation)
             print(f"---- End Debug Info ----\n")
-        
 
             return observation
             
         except Exception as e:
             print(f"Error occurred: {str(e)}")
             print(f"---- End Debug Info ----\n")
-            return f"Error searching context: {str(e)}", {}
+            return f"Error searching context: {str(e)}"
