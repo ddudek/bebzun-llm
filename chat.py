@@ -41,11 +41,11 @@ def get_system_prompt(tools: List[Any], input_dir: str) -> str:
 def get_folloup_prompt(chat_state: ChatState, tools: List[Any]) -> str:
     if chat_state.current_step == 1:
         if chat_state.search_used_count > 1:
-            return "Do you want to search again for more knowledge or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
+            return "\nDo you want to search again for more knowledge or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
         else:
-            return "Please use search_knowledge_tool again with different queries."
+            return "\nPlease use search_knowledge_tool again with different queries."
     if chat_state.current_step == 2:
-        return "Do you want to find more code or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
+        return "\nDo you want to find more code or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
     
     return ""
 
@@ -280,10 +280,11 @@ async def main():
                 messages.append(message)
 
             # unlocking new tools
-            if chat_state.get_file_used_count > 1 and not chat_state.finish_unlocked:
+            if chat_state.get_file_used_count >= 1 and not chat_state.finish_unlocked:
                 chat_state.finish_unlocked = True
                 step2_tools.append(final_answer_tool)
-                unlock_message = "\n\nUnlocked new tool!\n" + f"# New tool:\n## {final_answer_tool.name}\nDescription: {final_answer_tool.description}\n" 
+                print("Unlocked finish tool.")
+                unlock_message = "Unlocked new tool!\n" + f"# New tool:\n## {final_answer_tool.name}\nDescription: {final_answer_tool.description}\n" 
                 message = UnlockToolMessage(unlock_message)
                 messages.append(message)
 

@@ -60,15 +60,15 @@ class GetFileContentTool:
             
             if not is_allowed:
                 print(f"Safety check failed: Path is not within allowed source directories")
-                return f"Error: Cannot access path outside of the allowed source directories. Please use a relative path from one of: {self.source_dirs}", {}
+                return f"Error: Cannot access path outside of the allowed source directories. Please use a relative path from one of: {self.source_dirs}"
             
             if not os.path.exists(full_path):
                 print(f"Path does not exist: '{full_path}'")
-                return f"Error: The file '{path}' does not exist within the base directory.", {}
+                return f"Error: The file '{path}' does not exist within the base directory."
                 
             if not os.path.isfile(full_path):
                 print(f"Path is not a file: '{full_path}'")
-                return f"Error: The path '{path}' is not a file.", {}
+                return f"Error: The path '{path}' is not a file."
                 
             with open(full_path, 'r', encoding='utf-8', errors='replace') as file:
                 content = file.read()
@@ -78,20 +78,19 @@ class GetFileContentTool:
             print(f"---- End Debug Info ----\n")
             
             observation = f"- File added to the memory: '{path}'"
-            memory_update = {"files": {path: content}}
-            chat_state.memory.update_memory(memory_update)
+            chat_state.memory.add_file(path, content)
             
             return observation
             
         except UnicodeDecodeError:
             print(f"Unicode decode error: File may be binary")
             print(f"---- End Debug Info ----\n")
-            return f"Error: The file '{path}' appears to be a binary file and cannot be displayed as text.", {}
+            return f"Error: The file '{path}' appears to be a binary file and cannot be displayed as text."
             
         except Exception as e:
             print(f"Error occurred: {str(e)}")
             print(f"---- End Debug Info ----\n")
-            return f"Error reading file: {str(e)}", {}
+            return f"Error reading file: {str(e)}"
     
     def _clean_path_input(self, path: str) -> str:
         path = re.sub(r'[\n`]+$', '', path)
