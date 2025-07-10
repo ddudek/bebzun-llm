@@ -1,10 +1,11 @@
-import asyncio
 import json
-from ollama import AsyncClient
+import logging
+from ollama import Client
 from typing import Dict, List, Union, Any
 
 class OllamaLlmExecution:
-    def __init__(self, model: str = "devstral-16k:24b", temperature: float = 0.7, url: str = "http://localhost:11434"):
+    def __init__(self, model: str, temperature: float, url: str, logger: logging.Logger):
+        self.logger = logger
         self.options: dict = {'temperature': temperature}
         self.model = model
         self.base_url = url
@@ -18,15 +19,18 @@ class OllamaLlmExecution:
             "options": self.options
             }
 
-    async def llm_invoke(self, worker_num, system_prompt, prompt, schema):
-        # worker_model = "cogito-32k:3b" if worker_num % 2 == 0 else "cogito-32k-bartowski:3b"
+    def llm_invoke(self, system_prompt, prompt, schema):
         worker_model = self.model
-        client = AsyncClient(host=self.base_url)
+        client = Client(host=self.base_url)
 
         num_ctx = int(len(prompt) * 0.4)
         options: dict = self.options
         options["num_ctx"] = num_ctx
-        stream = await client.chat(
+
+        self.logger.info(f"LLM system prompt: {system_prompt}")
+        self.logger.info(f"LLM prompt: {prompt}")
+        
+        stream = client.chat(
                                     messages=[
                                         {'role': 'system', 'content': system_prompt},
                                         {'role': 'user', 'content': prompt}
@@ -38,25 +42,31 @@ class OllamaLlmExecution:
                                     )
             
         raw_response = ""
-        async for chunk in stream:
-            print(f"{worker_num}", end='', flush=True)
+        for chunk in stream:
+            #print(f".", end='', flush=True)
             raw_response+=chunk.message.content
+
+        #print(f"\n", end='', flush=True)
+        self.logger.info(f"LLM response: {raw_response}")
         return json.loads(raw_response)
 
-    async def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
+    def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
         """
-        New method for handling chat completions directly with Ollama.
+        Handling chat completions directly with Ollama.
         """
-        client = AsyncClient(host=self.base_url)
+        client = Client(host=self.base_url)
         
         options = self.options.copy()
         options['temperature'] = temperature
 
-        response = await client.chat(
+        self.logger.info(f"LLM query: {messages}")
+        response = client.chat(
             model=self.model,
             messages=messages,
             options=options
         )
         
         # The response object from ollama-python has the content in a nested dictionary
-        return response['message']['content']
+        raw_response = response['message']['content']
+        self.logger.info(f"LLM response: {raw_response}")
+        return raw_response

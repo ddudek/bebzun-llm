@@ -2,7 +2,9 @@ import argparse
 import os
 import sys
 from typing import List, Dict, Set
-import asyncio
+import logging
+from core.utils.logging_utils import setup_logging, setup_llm_logger
+
 
 from datetime import datetime, timezone
 from core.config.config import load_config
@@ -18,11 +20,12 @@ from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_
 
 # Initialize Storage as a global instance
 knowledge_store = KnowledgeStore()
+logger = None
 embeddings = None  # Will be initialized after config is loaded
 
 workers_num: int = 1
 
-async def final_process_file(worker_num: int, file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
+def final_process_file(file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
     """
     Generate a structured summary of the file using Ollama
     Returns a FileFinalSummaryOutput object with 'summary' and 'dependencies' fields
@@ -57,15 +60,12 @@ async def final_process_file(worker_num: int, file_path: str, content: str, file
     You are helpful kotlin and java expert that outputs JSON response, analysing and summarizing files of the android software sorce code. Your output will help understand how the whole project works. Generated JSON need to strictly follow the provided JSON Schema.
     """
 
-        response = await llm_execution.llm_invoke(worker_num, system_prompt, prompt=prompt, schema=FileDescription.model_json_schema())
+        response = llm_execution.llm_invoke(system_prompt, prompt=prompt, schema=FileDescription.model_json_schema())
         return FileDescription(**response)
     except Exception as e:
-        error_msg = f"[Error generating summary: {str(e)}]"
-        print(error_msg)
-        return FileDescription(
-            summary=error_msg,
-            dependencies=[]
-        )
+        error_msg = f"Error generating summary: {str(e)}"
+        logger.error(error_msg)
+        sys.exit(1)
     
 
 def get_filtered_files(input_dir: str, source_dirs: List[str], extensions: tuple = ('.kt', '.java'), name_filter: str = None) -> List[FileInfo]:
@@ -93,7 +93,7 @@ def get_filtered_files(input_dir: str, source_dirs: List[str], extensions: tuple
     for src_dir in source_dirs:
         abs_src_path = os.path.join(input_dir, src_dir)
         if not os.path.exists(abs_src_path):
-            print(f"Warning: The source directory '{abs_src_path}' does not exist.")
+            logger.warning(f"The source directory '{abs_src_path}' does not exist.")
             continue
             
         for root, _, files in os.walk(abs_src_path):
@@ -141,8 +141,6 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
     """
     # Use memory to add additional context to the files
     file_memory_classes = knowledge_store.get_file_structure(rel_path)
-
-    print(f"Found {len(file_memory_classes)} classes for {rel_path}")
     
     # Dictionary to track dependency files and their usage count
     
@@ -169,68 +167,27 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
     
     return result
 
-async def final_worker(queue: asyncio.Queue, worker_num: int, prompt_params: Dict, prompt_templates: Dict,
-                base_dir: str, lock: asyncio.Lock,
-                processed_counter: List[int], total_files: int, all_class_summaries: List[ClassDescriptionExtended],
-                processed_files: set) -> None:
-    """
-    Worker that processes files from the queue for final processing
-    """
-    while True:
-        try:
-            # Get item from queue with priority
-            item = await queue.get()
-            
-            # Check if we received a sentinel value indicating we should exit
-            if item is None:
-                break
-                
-            # Unpack the item (priority, counter, file_info)
-            file_info = item
-            rel_path = file_info.filepath
-            
-            # Skip if already processed
-            if rel_path in processed_files:
-                continue
-                
-            # Mark as processed
-            processed_files.add(rel_path)
-            
-            # Get dependency files with priority
-            dependency_files_with_priority = get_dependency_files(rel_path, {})
-            dependency_files = set(df for df, _ in dependency_files_with_priority)
-            
-            # Process the file using the extracted method
-            await llm_final_process_file(worker_num, rel_path,
-                                        knowledge_store.get_file_structure(rel_path),
-                                        dependency_files,
-                                        prompt_params, prompt_templates, base_dir, lock,
-                                        processed_counter, total_files, all_class_summaries)
-        
-        except Exception as e:
-            print(f"Error processing file {rel_path if 'rel_path' in locals() else 'unknown'}: {str(e)}")
-        finally:
-            queue.task_done()
 
-async def llm_final_process_file(worker_num: int, rel_path: str, file_memory: List[ClassStructure], dependency_files: set,
-                                prompt_params: Dict, prompt_templates: Dict, base_dir: str, lock: asyncio.Lock,
+
+def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dependency_files: set,
+                                prompt_params: Dict, prompt_templates: Dict, base_dir: str,
                                 processed_counter: List[int], total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
     """
     Process a file for final LLM processing and update shared data
     
     Args:
-        worker_num: The worker number for logging
         rel_path: Relative path of the file
         file_memory: Memory information for the file from cache
         dependency_files: Set of dependency files
         prompt_params: Parameters for the prompts
         prompt_templates: The prompt templates to use
         base_dir: Base directory (needed for file operations)
-        lock: Lock for thread-safe operations
         processed_counter: Counter for tracking progress
         total_files: Total number of files for progress reporting
         all_class_summaries: List to collect class summaries
     """
+
+    logger.info(f"Processing: {rel_path}")
 
     add_usages_summaries = True
     add_usages_methods = False
@@ -399,48 +356,49 @@ async def llm_final_process_file(worker_num: int, rel_path: str, file_memory: Li
         filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
 
     # Print dependency files for debugging
-    print(f"Dependency files for {rel_path}: {list(dependency_files)}")
-    print(f"Processing order: Dependencies processed before this file")
+    logger.info(f"Dependency files for {rel_path}: {list(dependency_files)}")
     
     if content is None:
-        print(f"  [Binary file, skipping] {rel_path}")
+        logger.info(f"  [Binary file, skipping] {rel_path}")
         return
     
     # Generate summary
-    print(f"\nProcessing #{worker_num}: {rel_path}")
-    summary = await final_process_file(worker_num, rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
-    print(f"Done #{worker_num}")
+    logger.info(f"Processing with llm...")
+    summary = final_process_file(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
     
-    # Process results and update shared data with lock
-    async with lock:
-        # Update processed counter
-        processed_counter[0] += 1
-        current_processed = processed_counter[0]
+    # Process results
+    # Update processed counter
+    processed_counter[0] += 1
+    current_processed = processed_counter[0]
+    
+
+    logg_info = f"Done: [{current_processed}/{total_files}] {rel_path}\nClasses found:\n"
+    for classs in summary.classes:
+        logg_info += f"- Class: {classs.full_classname}\n"
+        logg_info += f"  Summary: {classs.summary}\n"
+        logg_info += f"  Category: {classs.category}\n"
+    
+    # Print progress
+    logger.info(logg_info)
+    
+    # Process and save results
+    for classs in summary.classes:
         
-        # Print progress
-        print(f"\n[{current_processed}/{total_files}] {rel_path}")
+        # Create ClassFinalSummaryStorage object
+        storage_obj = ClassDescriptionExtended(
+            class_summary=classs,
+            file=rel_path
+        )
         
-        # Process and save results
-        for classs in summary.classes:
-            print(f"\n  Class: {classs.full_classname}")
-            # print(f"  Simple: {classs.simple_classname}")
-            print(f"  Summary: {classs.summary}")
-            print(f"  Category: {classs.category}")
-            
-            # Create ClassFinalSummaryStorage object
-            storage_obj = ClassDescriptionExtended(
-                class_summary=classs,
-                file=rel_path
-            )
-            
-            # Add to collection
-            all_class_summaries.append(storage_obj)
-            knowledge_store.save_class_description(storage_obj)
-            knowledge_store.dump_write_storage_final(f"{base_dir}/.ai-agent/final.json")
-        
-        # Periodically report progress
-        if current_processed % 10 == 0:
-            print(f"Progress: {current_processed}/{total_files} files processed")
+        # Add to collection
+        all_class_summaries.append(storage_obj)
+        knowledge_store.save_class_description(storage_obj)
+    
+    # Save after file processed
+    knowledge_store.dump_write_storage_final(f"{base_dir}/.ai-agent/db_final.json")
+    
+    # Periodically report progress
+    logger.info(f"Progress: {current_processed}/{total_files} files processed")
 
 def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> List[ClassDescriptionExtended]:
     """
@@ -457,82 +415,62 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     file_info_map = {f.filepath: f for f in file_infos}
     dependency_files_with_priority = {}
     
+    include_dependencies_first = True
     # First, collect all dependencies for each file
     for file_info in file_infos:
         if file_info.is_allowed_by_filter:
             rel_path = file_info.filepath
             dependency_files_with_priority[rel_path] = 0
-            get_dependency_files(rel_path, dependency_files_with_priority)
+            if include_dependencies_first:
+                get_dependency_files(rel_path, dependency_files_with_priority)
 
     # Convert to list of tuples and sort by priority (highest first)
     files_to_process_pre = [(file, priority) for file, priority in dependency_files_with_priority.items()]
     files_to_process_pre.sort(key=lambda x: x[1], reverse=True)
     
     total_files = len(files_to_process_pre)
-    print(f"Processing {total_files} files for final summary (including dependencies)")
-    print("Generating summaries with context...")
+    logger.info(f"Processing {total_files} files for final summary (including dependencies)")
+    logger.info("Generating summaries with context...")
     
     # List to collect all class summaries
     all_class_summaries = []
     files_to_process = []
 
     for file in files_to_process_pre:
-        print(file)
+        logger.info(file)
 
+
+    only_missing = False
     for file in files_to_process_pre:
         file_path = file[0]
         file_priority = file[1]
         file_info = file_info_map[file_path]
-        already_processed = knowledge_store.get_file_description(file_path)
+        already_processed = knowledge_store.get_file_description(file_path) if only_missing else False
         if file_info.is_allowed_by_filter and not already_processed:
             files_to_process.append((file_info, file_priority))
         elif not already_processed:
             files_to_process.append((file_info, file_priority))
     
-    # Run the async processing
-    async def process_files_async():
-        # Create a priority queue
-        queue = asyncio.Queue()
-        
-        # Set to track processed files
-        processed_files = set()
+    processed_counter = [0]
+    processed_files = set()
 
-        # Print queue order before processing
-        print("\nQueue processing order (lower priority number = higher actual priority):")
+    for i, (file_info, priority) in enumerate(files_to_process):
+        rel_path = file_info.filepath
+        if rel_path in processed_files:
+            continue
+        
+        processed_files.add(rel_path)
+        
+        dependency_files_with_priority_single = get_dependency_files(rel_path, {})
+        dependency_files = set(df for df, _ in dependency_files_with_priority_single)
+        
+        llm_final_process_file(rel_path,
+                               knowledge_store.get_file_structure(rel_path),
+                               dependency_files,
+                               prompt_params, prompt_templates, base_dir,
+                               processed_counter, total_files, all_class_summaries)
 
-        for i, (file_info, priority) in enumerate(files_to_process):
-            print(f"{i+1}. Priority: {priority} - {file_info.filepath}")
-            await queue.put(file_info)
-
-        # Shared counter for tracking progress
-        processed_counter = [0]
-        
-        # Create a lock for thread-safe operations
-        lock = asyncio.Lock()
-        
-        # Create worker tasks
-        tasks = []
-        for i in range(workers_num):  # Create worker tasks
-            task = asyncio.create_task(
-                final_worker(queue, i, prompt_params, prompt_templates, base_dir,
-                    lock, processed_counter, total_files, all_class_summaries, processed_files)
-            )
-            tasks.append(task)
-        
-        # Wait for all files to be processed
-        await queue.join()
-        
-        # Send sentinel values to stop workers
-        for _ in range(workers_num):
-            await queue.put(None)
-            
-        # Wait for all tasks to complete
-        await asyncio.gather(*tasks)
-        
-        print(f"All files processed in dependency order")
-    
-    # Run the async event loop
-    asyncio.run(process_files_async())
+    logger.info(f"All files processed in dependency order")
     
     # Return the collected summaries
     return all_class_summaries
@@ -548,8 +486,8 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         project_context: The project context string
     """
     total_classes = len(knowledge_store.descriptions_dict)
-    print(f"Processing {total_classes} classes for embeddings")
-    print("Generating embeddings...")
+    logger.info(f"Processing {total_classes} classes for embeddings")
+    logger.info("Generating embeddings...")
     
     processed = 0
 
@@ -558,7 +496,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         processed += 1
         rel_path = class_storage.file
         
-        print(f"\n[{processed}/{total_classes}] Processing class: {classname}")
+        logger.info(f"[{processed}/{total_classes}] Processing class: {classname}")
         
         # Get dependencies directly from class_storage.class_summary.dependencies
         # filecontext: str = f"{project_context}\n" if project_context else ""
@@ -568,7 +506,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         # Get dependencies from the class summary
         class_summary = class_storage.class_summary
         class_preprocess = knowledge_store.get_class_structure(class_summary.full_classname)
-        print(f"  Getting dependencies for class: {class_summary.full_classname}")
+        logger.info(f"  Getting dependencies for class: {class_summary.full_classname}")
         
         if class_summary.features:
             filecontext += "Used in features:\n"
@@ -599,7 +537,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
                 timestamp = datetime.now(timezone.utc).isoformat()
         
         # Generate embeddings and store with embeddings.store_embeddings
-        print(f"  Storing embeddings for class: {class_summary.full_classname}")
+        logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
         embedd_summary = f"{class_summary.summary}"
         if class_summary.methods:
             embedd_summary += "\nMethods:"
@@ -615,7 +553,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         
         # Print progress
         if processed % 10 == 0:
-            print(f"Progress: {processed}/{total_classes} classes processed")
+            logger.info(f"Progress: {processed}/{total_classes} classes processed")
 
     # Save to file
     embeddings.store_all_classes()
@@ -625,14 +563,23 @@ llm_execution = None
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Generate summaries for files in a directory.')
+    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
+    parser.add_argument('--log-file', help='Path to the log file.')
+    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
     parser.add_argument('-i', '--input-dir', help='Directory containing files to summarize. Overrides config file.')
     
     parser.add_argument('-m', '--mode', choices=['Pre', 'Final', 'Embedd'],
                         help='Processing mode: Pre (TreeSitter preprocessing), Final (final process only), Embedd (embeddings only)')
+    
     parser.add_argument('-filter', help='Filter files by name (only process files containing this string in filename). '
                                         'Prefix with "!" to invert (exclude files containing the string)')
     args = parser.parse_args()
     
+    # Initialize logging
+    global logger
+    global llm_logger
+    logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
+    llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
 
     # Determine input directory    
     input_dir = os.path.abspath(args.input_dir)
@@ -644,17 +591,19 @@ def main():
     # Initialize LLM execution
     global llm_execution, embeddings
     if config.llm.mode == 'mlx':
-        llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature)
+        logger.info("Initializing connection to MLX...")
+        llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature, logger=llm_logger)
     elif config.llm.mode == 'ollama':
-        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url)
+        logger.info("Initializing connection to Ollama...")
+        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger)
     elif config.llm.mode == 'anthropic':
-        llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key)
+        logger.info("Initializing connection to Anthropic...")
+        llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
     else:
         raise ValueError(f"Unsupported LLM mode: {config.llm.mode}")
     
     # Initialize embeddings with config
-    embeddings = Embeddings(config)
-
+    embeddings = Embeddings(config, logger)
     
     # Load the prompt templates
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -665,14 +614,14 @@ def main():
     filtered_file_infos = get_filtered_files(input_dir, config.source_dirs, extensions=('.kt', '.java'), name_filter=args.filter)
     
     # Print out the filtered files with sizes
-    print("\nFiltered files found:")
+    logger.info("Filtered files found:")
     for i, file_info in enumerate(filtered_file_infos, 1):
         formatted_size = format_file_size(file_info.file_size)
         status = "[WILL PROCESS]" if file_info.is_allowed_by_filter else "[FILTERED OUT]"
-        print(f"{i}. {file_info.filepath} ({formatted_size}) {status}")
+        logger.info(f"{i}. {file_info.filepath} ({formatted_size}) {status}")
     
     allowed_count = sum(1 for f in filtered_file_infos if f.is_allowed_by_filter)
-    print(f"Total: {len(filtered_file_infos)} files found, {allowed_count} will be processed\n")
+    logger.info(f"Total: {len(filtered_file_infos)} files found, {allowed_count} will be processed")
 
     # Load prompt templates for final processing
     final_prompt_path = os.path.join(script_dir, 'knowledge', 'prompts', 'final_proccess_prompt.txt')
@@ -701,51 +650,50 @@ def main():
     run_embeddings = mode is None or mode == 'Embedd'
 
     if run_final_process:
-        print("Initializing connection to Ollama...")
         llm_execution.on_load()
         
     # Pre-processing step with TreeSitter
     if run_pre_process:
-        print("\n=== Error, pre-process not implemented in this version ===")
+        logger.error("=== Error, pre-process not implemented in this version ===")
 
     if not run_pre_process and (run_final_process or run_embeddings):
         # If we're not running pre-process but need the data for later steps
-        print("\n=== Loading pre-processed data from storage ===")
-        knowledge_store.read_storage_pre_process(f"{input_dir}/.ai-agent/preprocess.json")
+        logger.info("=== Loading pre-processed data from storage ===")
+        knowledge_store.read_storage_pre_process(f"{input_dir}/.ai-agent/db_preprocess.json")
 
     # Final processing step
     if run_final_process:
-        print("\n=== Running Final processing ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/final.json")
+        logger.info("=== Running Final processing ===")
+        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
         
         # Process with memory and get all class summaries
         class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir)
         
         # Save all class summaries to storage at once
-        print(f"\nSaving {len(class_summaries_final)} class summaries with memory to storage...")
+        logger.info(f"Saving {len(class_summaries_final)} class summaries with memory to storage...")
         for classs in class_summaries_final:
             knowledge_store.save_class_description(classs)
 
-        knowledge_store.dump_write_storage_final(f"{input_dir}/.ai-agent/final.json")
+        knowledge_store.dump_write_storage_final(f"{input_dir}/.ai-agent/db_final.json")
 
     if run_embeddings and not run_final_process:
         # If we're only running embeddings and not final process, we need to load final data
-        print("\n=== Loading final processed data from storage ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/final.json")
+        logger.info("=== Loading final processed data from storage ===")
+        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
 
     # Embeddings processing step
     if run_embeddings:
-        print("\n=== Running Embeddings processing ===")
+        logger.info("=== Running Embeddings processing ===")
         process_embeddings(filtered_file_infos, base_dir=input_dir, project_context=prompt_params["projectcontext"])
 
-    print("\nSummary generation complete!")
+    logger.info("\nSummary generation complete!")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nProcess interrupted by user.")
+        logger.info("Process interrupted by user.")
         sys.exit(0)
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {str(e)}")
+        logger.exception("An unexpected error occurred:")
         sys.exit(1)

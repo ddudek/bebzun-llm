@@ -1,3 +1,4 @@
+import logging
 from interact.chat_state import ChatState
 
 class FinishStepTool:

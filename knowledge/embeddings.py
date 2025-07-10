@@ -1,12 +1,15 @@
 from typing import Dict, List, Optional
 import os
+import sys
 import json
 import ollama
+import logging
 import mlx.core as mx
 
 from dataclasses import dataclass, asdict
 from core.config.config import Config, EmbeddingsConfig
 from mlx_embeddings.utils import load
+from mlx_embeddings.tokenizer_utils import TokenizerWrapper
 
 @dataclass
 class EmbeddingEntry:
@@ -19,12 +22,13 @@ class EmbeddingEntry:
         return asdict(self)
 
 class Embeddings:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, logger: logging.Logger):
+        self.logger = logger
         self.storage_path: Optional[str] = None
         self.data: Dict[str, EmbeddingEntry] = {}
         self.config = config
         self.mlx_model = None
-        self.mlx_tokenizer = None
+        self.mlx_tokenizer: TokenizerWrapper = None
         
         # Handle missing embeddings config gracefully
         embeddings_config = getattr(config, 'embeddings', None)
@@ -40,7 +44,7 @@ class Embeddings:
             # Create storage path
             self.storage_path = os.path.join(base_dir, ".ai-agent", "embeddings.json")
             
-            print(f"Using embeddings file: {self.storage_path}")
+            self.logger.info(f"Using embeddings file: {self.storage_path}")
             
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
@@ -57,11 +61,11 @@ class Embeddings:
                 print(f"Successfully loaded {len(self.data)} embeddings from {self.storage_path}")
             else:
                 self.data = {}
-                print(f"No existing embeddings file found. A new one will be created at {self.storage_path}")
+                self.logger.info(f"No existing embeddings file found. A new one will be created at {self.storage_path}")
             
             return True
         except Exception as e:
-            print(f"Error initializing embeddings storage: {str(e)}")
+            self.logger.error(f"Error initializing embeddings storage: {str(e)}")
             self.data = {}
             return False
 
@@ -96,7 +100,7 @@ class Embeddings:
                 
                 # Verify embedding dimension
                 if len(embeddings) != self.vector_dimension:
-                    print(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
+                    self.logger.warning(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
                 
                 return embeddings
             elif embeddings_config.execution == "mlx":
@@ -106,16 +110,20 @@ class Embeddings:
 
                 input_ids = self.mlx_tokenizer.encode(text, return_tensors="mlx")
                 outputs = self.mlx_model(input_ids)
-                embeddings = outputs.text_embeds.squeeze().tolist()
+                embeddings_te: Optional[mx.array] = outputs.text_embeds
+                embeddings = embeddings_te[1].tolist()
+
+                # to workaround leaking memory in mlx for some reason:
+                mx.clear_cache()
 
                 if len(embeddings) != self.vector_dimension:
-                    print(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
+                    self.logger.warning(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
                 
                 return embeddings
             else:
                 raise ValueError(f"Unsupported embeddings execution method: {embeddings_config.execution}")
         except Exception as e:
-            print(f"Error generating embeddings: {str(e)}")
+            self.logger.error(f"Error generating embeddings: {str(e)}")
             return []
         
     def store_all_classes(self):
@@ -132,18 +140,18 @@ class Embeddings:
             summary: The class summary
             filecontext: The file content
         """
-        print(f"Store embeddings for {classname}:")
+        self.logger.info(f"Store embeddings for {classname}:")
         
         # Combine summary and content as the text to embed
         text_to_embed = f"{summary}\n{filecontext}" if filecontext else summary
-        print(f"Text to embedd:\n ------- \n{text_to_embed}\n -------")
+        self.logger.info(f"Text to embedd:\n ------- \n{text_to_embed}\n -------")
         
         try:
             # Generate embeddings
             embedding_vector = self.generate_embeddings("search_document: " + text_to_embed)
             
             if not embedding_vector:
-                print(f"Failed to generate embeddings for {classname}")
+                self.logger.error(f"Failed to generate embeddings for {classname}")
                 return
             
             entry = EmbeddingEntry(
@@ -154,9 +162,9 @@ class Embeddings:
             )
             self.data[classname] = entry
             
-            print(f"Successfully stored embeddings for {classname} in {self.storage_path}")
+            # self.logger.info(f"Successfully stored embeddings for {classname} in {self.storage_path}")
         except Exception as e:
-            print(f"Error storing embeddings for {classname}: {str(e)}")
+            self.logger.error(f"Error storing embeddings for {classname}: {str(e)}")
 
     def search_similar(self, query: str, limit: int = 5) -> List[Dict]:
         """
@@ -171,14 +179,14 @@ class Embeddings:
         """
         try:
             if not self.is_loaded() or not self.data:
-                print("Embeddings not available or empty, cannot search")
+                self.logger.error("Embeddings not available or empty, cannot search")
                 return []
 
             # Generate embeddings for the query
             query_embedding = self.generate_embeddings("search_query: " + query)
             
             if not query_embedding:
-                print(f"Failed to generate embeddings for query")
+                self.logger.error(f"Failed to generate embeddings for query")
                 return []
             
             query_embedding_mx = mx.array(query_embedding)
@@ -213,7 +221,7 @@ class Embeddings:
             return results
 
         except Exception as e:
-            print(f"Error searching for similar documents: {str(e)}")
+            self.logger.error(f"Error searching for similar documents: {str(e)}")
             return []
 
     def get_all_documents(self) -> Dict[str, EmbeddingEntry]:
@@ -224,7 +232,7 @@ class Embeddings:
             List of all documents with their content and metadata.
         """
         if not self.is_loaded():
-            print("Embeddings storage not available, cannot retrieve documents")
+            self.logger.error("Embeddings storage not available, cannot retrieve documents")
             return []
         
         return self.data

@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from typing import Dict, Any, Tuple
 from interact.memory.memory import Memory
 from interact.chat_state import ChatState
@@ -18,36 +19,35 @@ class GetFileContentTool:
         "```"
         )
     
-    def __init__(self, base_path: str, source_dirs: list[str]):
+    def __init__(self, base_path: str, source_dirs: list[str], logger: logging.Logger):
+        self.logger = logger
         self.base_path = base_path
         self.source_dirs = [os.path.normpath(d) for d in source_dirs]
-
     
     def run(self, chat_state: ChatState, path: str = "") -> str:
         """
         Get the content of a specific file in the specified directory.
         Provide a relative path to the file.
         """
-        print(f"\n---- GetFileContentTool Debug Info ----")
-        print(f"Input path parameter (raw): '{path}'")
+        self.logger.debug(f"\n---- GetFileContentTool Debug Info ----")
+        self.logger.debug(f"Input path parameter (raw): '{path}'")
         
         path = self._clean_path_input(path)
-        print(f"Input path parameter (cleaned): '{path}'")
+        self.logger.debug(f"Input path parameter (cleaned): '{path}'")
         
-        print(f"Base path: '{self.base_path}'")
+        self.logger.debug(f"Base path: '{self.base_path}'")
         
         try:
             if not path:
-                print(f"Empty path provided")
-                return "Error: Please provide a file path.", {}
+                self.logger.error(f"Empty path provided")
+                return "Error: Please provide a file path."
             
             original_path = path
             path = path.lstrip("/")
             if original_path != path:
-                print(f"Removed leading slashes: '{original_path}' -> '{path}'")
+                self.logger.debug(f"Removed leading slashes: '{original_path}' -> '{path}'")
                 
             full_path = os.path.normpath(os.path.join(self.base_path, path))
-            print(f"Resolved full path: '{full_path}'")
             
             # Security check: ensure the requested path is within one of the allowed source directories
             abs_path = os.path.abspath(full_path)
@@ -59,37 +59,33 @@ class GetFileContentTool:
                     break
             
             if not is_allowed:
-                print(f"Safety check failed: Path is not within allowed source directories")
+                self.logger.error(f"Safety check failed: Path is not within allowed source directories")
                 return f"Error: Cannot access path outside of the allowed source directories. Please use a relative path from one of: {self.source_dirs}"
             
             if not os.path.exists(full_path):
-                print(f"Path does not exist: '{full_path}'")
+                self.logger.error(f"Path does not exist: '{full_path}'")
                 return f"Error: The file '{path}' does not exist within the base directory."
                 
             if not os.path.isfile(full_path):
-                print(f"Path is not a file: '{full_path}'")
+                self.logger.error(f"Path is not a file: '{full_path}'")
                 return f"Error: The path '{path}' is not a file."
                 
             with open(full_path, 'r', encoding='utf-8', errors='replace') as file:
                 content = file.read()
                 
             chat_state.get_file_used_count += 1
-            print(f"Successfully read file: '{full_path}'")
-            print(f"---- End Debug Info ----\n")
-            
             observation = f"- File added to the memory: '{path}'"
             chat_state.memory.add_file(path, content)
-            
+
+            self.logger.debug(f"Tool result ({self.name}), full path: {full_path}:\n{observation}")
             return observation
             
-        except UnicodeDecodeError:
-            print(f"Unicode decode error: File may be binary")
-            print(f"---- End Debug Info ----\n")
+        except UnicodeDecodeError as e:
+            self.logger.error(f"Error occurred: {str(e)}")
             return f"Error: The file '{path}' appears to be a binary file and cannot be displayed as text."
             
         except Exception as e:
-            print(f"Error occurred: {str(e)}")
-            print(f"---- End Debug Info ----\n")
+            self.logger.error(f"Error reading file: {str(e)}")
             return f"Error reading file: {str(e)}"
     
     def _clean_path_input(self, path: str) -> str:

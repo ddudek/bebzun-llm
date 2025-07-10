@@ -74,7 +74,7 @@ def main():
 
         # Create analyzer and run analysis
         analyzer = CodebaseAnalyzer(verbose=args.verbose)
-        output = input_dir / ".ai-agent" / "preprocess.json"
+        output = input_dir / ".ai-agent" / "db_preprocess.json"
         analyzer.analyze_codebase(source_dirs, str(input_dir), output)
         
         print(f"Analysis complete. Results written to {output}")

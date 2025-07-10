@@ -1,7 +1,7 @@
 import os
 import sys
 import math
-from typing import Optional
+from typing import List, Optional
 
 def get_file_content(file_path: str) -> str:
     """
@@ -70,3 +70,37 @@ def format_file_size(size_in_bytes: int) -> str:
         return f"{int(size_value)} {units[unit_index]}"
     else:
         return f"{size_value:.2f} {units[unit_index]}"
+        
+def get_all_files(base_dir: str, source_dirs: List[str], ignored_dirs: set[str], ignored_files: set[str]) -> List[str]:
+    """
+    Get a list of all files in the specified source directories, ignoring specified directories and files.
+    """
+    all_files = []
+    for src_dir in source_dirs:
+        # Skip ignored source directories at the top level
+        if src_dir in ignored_dirs:
+            continue
+
+        abs_src_path = os.path.join(base_dir, src_dir)
+        if not os.path.isdir(abs_src_path):
+            continue
+
+        for root, dirs, files in os.walk(abs_src_path, topdown=True):
+            # Exclude ignored directories from traversal
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
+            
+            for file in files:
+                # Exclude ignored files
+                # if file not in ignored_files:
+                skip_file = False
+                for filter in ignored_files:
+                    if filter.lower() in file.lower():
+                        skip_file = True
+
+                if skip_file:
+                    continue    
+                
+                rel_path = os.path.relpath(os.path.join(root, file), base_dir)
+                all_files.append(rel_path)
+
+    return all_files

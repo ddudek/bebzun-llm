@@ -1,12 +1,12 @@
-import asyncio
 import json
+import logging
 import time
-from ollama import AsyncClient
-from anthropic import AsyncAnthropic
+from anthropic import Anthropic
 from anthropic import APIStatusError, APIConnectionError, RateLimitError
 
 class AnthropicLlmExecution:
-    def __init__(self, model: str = "claude-3-5-sonnet-latest", key: str = None):
+    def __init__(self, model: str, key: str, logger: logging.Logger):
+        self.logger = logger
         self.options: dict = {}
         self.anthropic_key = key
         self.model = model
@@ -17,30 +17,36 @@ class AnthropicLlmExecution:
     def model_desc(self) -> str:
         return "anthropic " + self.model
 
-    async def llm_invoke(self, worker_num, system_prompt, prompt, schema):
+    def llm_invoke(self, system_prompt, prompt, schema) -> str:
         finished = False
-        while (not finished):
+        retry_count = 0
+
+        self.logger.info(f"LLM system prompt: {system_prompt}")
+        self.logger.info(f"LLM prompt: {prompt}")
+
+        response = ""
+        while (retry_count <= 3 and not finished):
+            retry_count += 1
             try:
-                response = await self.anthropic_llm(system_prompt, prompt, schema)
+                response = self.anthropic_llm(system_prompt, prompt, schema)
                 finished = True
             except APIConnectionError as e:
-                print("The server could not be reached")
-                print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+                self.logger.error("The server could not be reached", exc_info=True)
                 time.sleep(10)
             except RateLimitError as e:
-                print("A 429 status code was received; we should back off a bit.")
-                print(e)
+                self.logger.error("A 429 status code was received; we should back off a bit.", exc_info=True)
                 time.sleep(15)
             except APIStatusError as e:
-                print("Another non-200-range status code was received")
-                print(e.status_code)
-                print(e)
+                self.logger.error(f"Another non-200-range status code was received: {e.status_code}", exc_info=True)
                 time.sleep(20)
+
+        self.logger.info(f"LLM response: {response}")
+
         return response
     
-    async def anthropic_llm(self, system_prompt, prompt, schema):
-        client = AsyncAnthropic(
-                api_key=self.anthropic_key,  # This is the default and can be omitted
+    def anthropic_llm(self, system_prompt, prompt, schema):
+        client = Anthropic(
+                api_key=self.anthropic_key,
             )
         tools = [
                 {
@@ -49,7 +55,7 @@ class AnthropicLlmExecution:
                     "input_schema": schema
                 }
             ]
-        message = await client.messages.create(
+        message = client.messages.create(
                 max_tokens=4096,
                 system=system_prompt,
                 messages=[
@@ -60,9 +66,9 @@ class AnthropicLlmExecution:
                 model=self.model,
             )
         
-        await client.close()
+        client.close()
 
-        print(message)
+        
             
         function_call = message.content[0].input
         return function_call
