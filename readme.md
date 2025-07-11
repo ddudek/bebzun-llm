@@ -1,12 +1,18 @@
-# Codebase knowledge context for LLMs
+# Bebzun-llm: Generating codebase knowledge for LLMs
 
-The project explores a different approach to context engineering for large codebases. Instead of feeding raw source code to LLMs, this project focuses on heavy pre-processing of codebase files to create summarizations and build a knowledge base of the entire project that's easy to lookup and query.
+Bebzun is a playful Polish word for a big, round belly—usually describing something that’s grown a bit too much, or is adorably oversized. Kind of like our project’s codebase sometimes.
+
+The project explores a different approach to context engineering for large codebases. Instead of feeding raw source code to LLMs, this project focuses on extensive pre-processing of codebase files to create summarizations and build a knowledge base of the entire project that's easy to lookup and query.
 
 It currently supports my daily work - Android, so these languages:
 - Java
 - Kotlin
 
-Tested mainly on Apple mac, and MLX engine, but also supports Ollama.
+In progress 🚧:
+- Objective-C
+- Swift
+
+Tested primarily on Apple Mac with the MLX engine, but also supports Ollama.
 
 **The main goal:** 
 Maximize LLM context efficiency by providing pre-processed, contextual summaries rather than raw code. This allows smaller LLMs (e.g. 8-32b models with Ollama, MLX-LM, etc.) to effectively understand and work with huge, poorly-written codebases that would otherwise saturate context quickly and cause issues with finding relevant code.
@@ -27,7 +33,7 @@ Maximize LLM context efficiency by providing pre-processed, contextual summaries
     ↓
 [Knowledge Base] → LLM summaries + vector embeddings → db_embeddings.json
     ↓  
-[Retrieval] → Vector similarity search + BM25
+[Retrieval] → Vector similarity search + BM25 (+ needs Reranker 🚧)
     ↓  
 [Interactive Query] → Simple RAG-based chat with pre-processed knowledge
 ```
@@ -125,7 +131,7 @@ This knowledge base can be used for various tasks, here explored:
 ## Features
 - **Context-Engineered Summaries**: LLM receives dependency information and usage patterns for each class
 - **Small-LLM Optimization**: Pre-processed summaries for efficient context usage. Supports Ollama, MLX-LM, with e.g. Qwen3 14b, Gemma3 etc. Also added Anthropic API for external provider.
-- **Interactive Knowledge Query**: RAG-based Q&A system with semantic search
+- **Interactive Knowledge Query**: RAG-based Q&A system with vector and semantic search
 - **Dependency-Order Processing**: Files processed in optimal order for maximum context
 - **Incremental Processing**: Skip already processed files for efficiency
 - **Vector-Based Search**: Find relevant code using natural language queries
@@ -134,6 +140,7 @@ This knowledge base can be used for various tasks, here explored:
 ```bash
 pip install -r requirements.txt
 ```
+Make sure you have local Ollama, or MLX-LM setup.
 
 ## 2. Configuration
 Create configuration files at `<your-project>/.ai-agent/`:
@@ -160,8 +167,7 @@ python static_analysis.py -i /path/to/your/project
 ```
 
 ### Step 2: Knowledge Building
-Uses LLM to generate intelligent summaries of classes and methods with contextual information. Creates `ai-agent/db_final.json` with LLM summaries and embeddings database. 
-This step will take a significant amount of time. Macbook M1 Pro with 32GB RAM and using Qwen3-14b, will take 2 days for processing a project with ~1300 files.
+Uses LLM to generate summaries of classes and methods with contextual information. Creates `ai-agent/db_final.json` with LLM summaries and embeddings database. This step can take significant amount of time. Macbook M1 Pro with 32GB RAM and using Qwen3-14b, will take 2 days for processing a project with ~1300 files.
 Database is created incrementally, using already processed files as a context for the next ones. After each processed file, output file is updated to avoid loosing progress.
 
 ```bash
@@ -193,7 +199,7 @@ python cli.py -i /path/to/your/project summarize_project
 
 ## Output Files
 
-The system uses simple, json-based storage, and generates several output files in the `.ai-agent/` directory:
+The system uses simple, json-based storage, and generates output files in the `.ai-agent/` directory:
 
 - `config.json`: Configuration file (user-provided)
 - `db_preprocess.json`: Static analysis results
@@ -204,7 +210,7 @@ The system uses simple, json-based storage, and generates several output files i
 
 - Python 3.7+
 - Dependencies listed in `requirements.txt`
-- LLM backend (Ollama server, MLX-LM setup, or Anthropic API)
+- LLM backend (Ollama server, MLX-LM setup, or Anthropic API (in progress 🚧) )
 
 ## Testing
 

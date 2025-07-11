@@ -5,13 +5,7 @@ from typing import Dict, List
 from mlx_lm import load, stream_generate, generate
 from mlx_lm.models.cache import load_prompt_cache, make_prompt_cache, save_prompt_cache
 from mlx_lm.sample_utils import make_sampler
-from math import trunc
-
-def chars_to_tokens(chars: int) -> int:
-    return trunc(chars / 4.8)
-
-def tokens_to_chars(tokens: int) -> int:
-    return trunc(tokens * 4.8)
+from core.utils.token_utils import tokens_to_chars, chars_to_tokens
 
 class MlxLlmExecution:
     def __init__(self, model: str, temperature: float, logger: logging.Logger):
@@ -74,7 +68,7 @@ class MlxLlmExecution:
 
         return json.loads(truncated_response)
 
-    def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
+    def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, verbose=False) -> str:
         """
         Method for handling chat completions directly with MLX.
         """
@@ -97,7 +91,6 @@ class MlxLlmExecution:
             enable_thinking=True
         )
 
-        verbose = self.logger.level == 'DEBUG'
         raw_response = generate(
                 self.mlx_model,
                 self.mlx_tokenizer,

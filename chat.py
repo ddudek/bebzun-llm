@@ -254,8 +254,8 @@ def main():
             # LLM invoke
             messages_formatted = messages_to_llm_input(messages, chat_state, STEP_TOOLS, args.input_dir or "")
             print(f"\nAI:")
-            response_content = llm_execution.llm_chat(messages_formatted)
-            print(f"{response_content}")
+            response_content = llm_execution.llm_chat(messages_formatted, verbose=True)
+            
             response_content_cleaned = clean_thinking_tag(response_content)
 
             messages.append(AssistantMessage(content=response_content_cleaned))

@@ -140,12 +140,12 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
         List of tuples (dependency_file_path, priority) sorted by priority (highest first)
     """
     # Use memory to add additional context to the files
-    file_memory_classes = knowledge_store.get_file_structure(rel_path)
+    file_classes = knowledge_store.get_file_structure(rel_path)
     
     # Dictionary to track dependency files and their usage count
     
     # Collect all distinct dependency files with their usage count
-    for class_info in file_memory_classes if file_memory_classes else []:
+    for class_info in file_classes if file_classes else []:
         for dependency in class_info.dependencies:
             if dependency.full_classname in knowledge_store.class_structure_dict:
                 dependency_storage = knowledge_store.class_structure_dict[dependency.full_classname]
@@ -400,7 +400,7 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
     # Periodically report progress
     logger.info(f"Progress: {current_processed}/{total_files} files processed")
 
-def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> List[ClassDescriptionExtended]:
+def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None, is_filtering_enabled: bool = False) -> List[ClassDescriptionExtended]:
     """
     Process a list of files and generate final summaries with context from storage
     Returns a list of ClassFinalSummaryStorage objects to be saved in storage
@@ -415,7 +415,7 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     file_info_map = {f.filepath: f for f in file_infos}
     dependency_files_with_priority = {}
     
-    include_dependencies_first = False
+    include_dependencies_first = True
     # First, collect all dependencies for each file
     for file_info in file_infos:
         if file_info.is_allowed_by_filter:
@@ -439,16 +439,19 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     for file in files_to_process_pre:
         logger.info(file)
 
-
-    only_missing = False
+    only_missing = True
     for file in files_to_process_pre:
         file_path = file[0]
         file_priority = file[1]
         file_info = file_info_map[file_path]
-        already_processed = knowledge_store.get_file_description(file_path) if only_missing else False
-        if file_info.is_allowed_by_filter and not already_processed:
-            files_to_process.append((file_info, file_priority))
-        elif not already_processed:
+
+        already_processed = knowledge_store.get_file_description(file_path)
+
+        if is_filtering_enabled:
+            if file_info.is_allowed_by_filter or not already_processed:
+                files_to_process.append((file_info, file_priority))
+
+        elif not already_processed or not only_missing:
             files_to_process.append((file_info, file_priority))
     
     processed_counter = [0]
@@ -476,7 +479,6 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     return all_class_summaries
 
 def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project_context: str = None) -> None:
-    embeddings.initialize(base_dir)
     """
     Process embeddings for all classes in storage.final_process
     
@@ -485,6 +487,8 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         base_dir: Base directory (needed for file operations)
         project_context: The project context string
     """
+    embeddings.initialize(base_dir, create=True)
+
     total_classes = len(knowledge_store.descriptions_dict)
     logger.info(f"Processing {total_classes} classes for embeddings")
     logger.info("Generating embeddings...")
@@ -613,6 +617,8 @@ def main():
     # Get file information with optional filter
     filtered_file_infos = get_filtered_files(input_dir, config.source_dirs, extensions=('.kt', '.java'), name_filter=args.filter)
     
+    is_filtering_enabled = args.filter != None
+
     # Print out the filtered files with sizes
     logger.info("Filtered files found:")
     for i, file_info in enumerate(filtered_file_infos, 1):
@@ -667,7 +673,7 @@ def main():
         knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
         
         # Process with memory and get all class summaries
-        class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir)
+        class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir, is_filtering_enabled=is_filtering_enabled)
         
         # Save all class summaries to storage at once
         logger.info(f"Saving {len(class_summaries_final)} class summaries with memory to storage...")
