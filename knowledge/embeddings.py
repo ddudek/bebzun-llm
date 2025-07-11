@@ -40,34 +40,29 @@ class Embeddings:
 
     def initialize(self, base_dir: str):
         """Initialize JSON file storage and load embeddings"""
-        try:
-            # Create storage path
-            self.storage_path = os.path.join(base_dir, ".ai-agent", "embeddings.json")
-            
-            self.logger.info(f"Using embeddings file: {self.storage_path}")
-            
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-            
-            # Load data from JSON file
-            if os.path.exists(self.storage_path):
-                with open(self.storage_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content:
-                        loaded_data = json.loads(content)
-                        self.data = {k: EmbeddingEntry(**v) for k, v in loaded_data.items()}
-                    else:
-                        self.data = {}
-                print(f"Successfully loaded {len(self.data)} embeddings from {self.storage_path}")
-            else:
-                self.data = {}
-                self.logger.info(f"No existing embeddings file found. A new one will be created at {self.storage_path}")
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Error initializing embeddings storage: {str(e)}")
-            self.data = {}
-            return False
+        
+        # Create storage path
+        self.storage_path = os.path.join(base_dir, ".ai-agent", "db_embeddings.json")
+        
+        self.logger.info(f"Using embeddings file: {self.storage_path}")
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
+        
+        # Load data from JSON file
+        if os.path.exists(self.storage_path):
+            with open(self.storage_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if content:
+                    loaded_data = json.loads(content)
+                    self.data = {k: EmbeddingEntry(**v) for k, v in loaded_data.items()}
+                else:
+                    self.data = {}
+            print(f"Successfully loaded {len(self.data)} embeddings from {self.storage_path}")
+        else:
+            raise Exception("db_embeddings.json file not found")
+
+        return True
 
     def is_loaded(self) -> bool:
         """Check if the embeddings data is loaded"""

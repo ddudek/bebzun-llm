@@ -415,7 +415,7 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     file_info_map = {f.filepath: f for f in file_infos}
     dependency_files_with_priority = {}
     
-    include_dependencies_first = True
+    include_dependencies_first = False
     # First, collect all dependencies for each file
     for file_info in file_infos:
         if file_info.is_allowed_by_filter:

@@ -18,7 +18,7 @@ Good example (sub-classes explained in the summary, explaining the effects):
 ```
 {{
       "simple_classname": "ExampleState",
-      "full_classname": "com.example.mosconiremoteandroid.data.CommState",
+      "full_classname": "com.example.mosconiremoteandroid.data.ExampleState",
       "summary": "ExampleState is a sealed interface that defines the possible states for some example. ExampleState01 causes the ViewModel to show example1, ExampleState02 causes the ViewModel to show example2",
       "category": "Data",
       "methods": [],

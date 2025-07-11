@@ -3,6 +3,7 @@ import os
 import re
 import json
 import logging
+import sys
 from typing import Any, Dict, List, Optional
 
 from core.config.config import load_config
@@ -136,12 +137,11 @@ def main():
     try:
         embeddings_instance = Embeddings(config, logger)
         if not embeddings_instance.initialize(input_dir):
-            logger.warning("Embeddings storage is not available. Context search will be disabled.")
+            logger.error("Embeddings storage is not available. Context search will be disabled.")
             embeddings_instance = None
     except Exception:
         logger.exception("Error initializing embeddings:")
-        logger.warning("Context search will be disabled.")
-        embeddings_instance = None
+        sys.exit(1)
 
     knowledge = KnowledgeStore()
     knowledge_file_path = os.path.join(input_dir, ".ai-agent", f"db_final.json")
@@ -149,7 +149,8 @@ def main():
         knowledge.read_storage_final(knowledge_file_path)
         logger.info(f"Successfully loaded knowledge db from {knowledge_file_path}")
     else:
-        logger.warning(f"Warning: knowledge db file not found at {knowledge_file_path}. Context might be incomplete.")
+        logger.error(f"Warning: knowledge db file not found at {knowledge_file_path}. Context might be incomplete.")
+        sys.exit(1)
 
          # Initialize LLM execution
     if config.llm.mode == 'mlx':

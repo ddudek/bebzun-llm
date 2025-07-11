@@ -89,7 +89,7 @@ class TestKotlinParser(unittest.TestCase):
         expected_dependencies = {
             'ConfigurationHelper': {
                 'full_name': 'com.example.data.other.ConfigurationHelper',
-                'expected_lines': [12, 20, 22, 29, 32, 49, 50, 59, 61]
+                'expected_lines': [12, 20, 22, 29, 32, 34, 49, 50, 59, 61]
             },
             'LoggingService': {
                 'full_name': 'com.example.data.other.LoggingService',

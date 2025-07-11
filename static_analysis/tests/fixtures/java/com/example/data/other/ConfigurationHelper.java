@@ -66,4 +66,6 @@ public class ConfigurationHelper {
                 ", enabled=" + enabled +
                 '}';
     }
+
+    public final static boolean FLAG_ENABLED = false;
 }

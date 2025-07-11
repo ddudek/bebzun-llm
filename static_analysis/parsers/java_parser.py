@@ -334,10 +334,16 @@ class JavaParser(BaseParser):
             if parent:
                 is_assignment_rhs = parent.type == 'assignment_expression' and parent.child_by_field_name('right') == node
                 is_return_value = parent.type == 'return_statement'
-                
-                if is_assignment_rhs or is_return_value:
+                is_field_access = parent.type == 'field_access'
+
+                if is_assignment_rhs or is_return_value or is_field_access:
                     var_name = self._get_node_text(node, file_content)
-                    var_type = local_symbol_table.get(var_name)
+
+                    if var_name in known_classes:
+                        var_type = var_name
+                    else:
+                        var_type = local_symbol_table.get(var_name)
+                        
                     if var_type:
                         self._add_dependency(var_type, node.start_point[0] + 1, class_name, known_classes, imports, dependencies_output)
 

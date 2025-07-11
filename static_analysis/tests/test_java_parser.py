@@ -91,7 +91,7 @@ class TestJavaParser(unittest.TestCase):
         expected_dependencies = {
             'ConfigurationHelper': {
                 'full_name': 'com.example.data.other.ConfigurationHelper',
-                'expected_lines': [12, 15, 16, 22, 23, 30, 33, 50, 51, 60]
+                'expected_lines': [12, 15, 16, 22, 23, 30, 33, 35, 50, 51, 60]
             },
             'LoggingService': {
                 'full_name': 'com.example.data.other.LoggingService',

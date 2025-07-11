@@ -40,4 +40,6 @@ data class ConfigurationHelper(
     fun isEnabled(): Boolean {
         return enabled
     }
+
+    
 }

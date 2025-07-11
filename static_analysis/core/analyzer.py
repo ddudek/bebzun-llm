@@ -163,7 +163,7 @@ class CodebaseAnalyzer:
             
             # Determine which parser to use based on file extension
             parser = self.java_parser if source_file_absolute.suffix.lower() == '.java' else self.kotlin_parser
-            
+
             # Extract dependencies
             dependencies = parser.extract_dependencies(
                 file_content, cls.simple_classname, known_classes

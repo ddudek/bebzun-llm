@@ -31,7 +31,7 @@ class DataProcessor(
     ): Boolean {
         var one = configLocal.isEnabled()
         var two = logger.isVerbose()
-        return one && two
+        return one && two && ConfigurationHelper.FLAG_ENABLED
     }
     
     /**

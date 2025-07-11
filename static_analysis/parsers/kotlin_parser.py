@@ -586,7 +586,7 @@ class KotlinParser(BaseParser):
         """Handle navigation expressions like variable.method() or variable.property."""
         if node.children:
             receiver = node.children[0]
-            if receiver.type == 'simple_identifier':
+            if receiver.type == 'simple_identifier' or receiver.type == 'identifier':
                 var_name = self._get_node_text(receiver, file_content)
                 
                 # Try function-scoped lookup first
@@ -595,6 +595,10 @@ class KotlinParser(BaseParser):
                 # Fall back to class-level lookup
                 if not var_type:
                     var_type = symbol_table.get(var_name)
+
+                # if receiver is a type, e.g. ExampleClass.something
+                if var_name in known_classes:
+                    var_type = var_name
                 
                 if var_type and var_type in known_classes:
                     line_number = node.start_point[0] + 1

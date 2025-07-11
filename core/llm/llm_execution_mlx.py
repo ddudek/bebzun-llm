@@ -46,6 +46,14 @@ class MlxLlmExecution:
             enable_thinking=False
         )
 
+        prompt_size: int = 0
+        full_prompt = ""
+        for message in messages:
+            message_formatted = json.dumps(message, indent=2).replace("\\n","\n")
+            prompt_size += len(message_formatted)
+            full_prompt += message_formatted + "\n"
+        self.logger.debug(f"LLM prompt: \n{full_prompt}\n---\nEnd of prompt, size: {prompt_size} b ({chars_to_tokens(prompt_size)} tks)")
+
         verbose = self.logger.level == 'DEBUG'
         raw_response = generate(
             self.mlx_model, 

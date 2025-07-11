@@ -32,7 +32,7 @@ public class DataProcessor {
     ) {
         boolean one = config.isEnabled();
         boolean two = logger.isVerbose();
-        return one && two;
+        return one && two && ConfigurationHelper.FLAG_ENABLED;
     }
     
     /**
