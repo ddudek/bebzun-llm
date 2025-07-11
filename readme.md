@@ -116,7 +116,7 @@ Example:
 ]
 ```
 
-Then this learned knowledge can be used for various tasks, here explored:
+This knowledge base can be used for various tasks, here explored:
 - Simple chat about the codebase
 - Generate initial context for more advanced 3rd party coding agent.
 - Generate a comprehensive project summary/analysis for structure and all features, by listing all summaries (only for mid/smaller projects, ~1200 classes is roughly 128k tokens).
@@ -130,135 +130,17 @@ Then this learned knowledge can be used for various tasks, here explored:
 - **Incremental Processing**: Skip already processed files for efficiency
 - **Vector-Based Search**: Find relevant code using natural language queries
 
-## Quick Start
-
-### 1. Installation
+## 1. Installation
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
-Create a configuration file at `<your-project>/.ai-agent/config.json`:
+## 2. Configuration
+Create configuration files at `<your-project>/.ai-agent/`:
+`config.json` - use example/config_mlx.json or example/config_ollama.json
+`project_context.txt` - general description of your project for initial processing
 
-```json
-{
-  "source_dirs": ["app/src/main/java"],
-  "llm": {
-    "mode": "ollama",
-    "ollama": {
-      "url": "http://localhost:11434",
-      "model": "gemma3:12b",
-      "temperature": 0.7
-    }
-  }
-}
-```
-
-### 3. Run Analysis
-```bash
-# Step 1: Static Analysis
-python static_analysis.py -i /path/to/your/project
-
-# Step 2: Knowledge Building
-python build_knowledge.py -i /path/to/your/project -m Final
-python build_knowledge.py -i /path/to/your/project -m Embedd
-
-# Step 3: Interactive Chat
-python chat.py -i /path/to/your/project
-```
-
-## Usage
-
-### Static Analysis
-Analyzes Java and Kotlin source files to extract class structures, methods, and dependencies.
-
-```bash
-python static_analysis.py -i <input_directory>
-```
-
-**Options:**
-- `-i, --input-dir`: Directory containing Java/Kotlin source files (required)
-
-**Output:** `.ai-agent/db_preprocess.json` containing class structures and dependencies
-
-### Knowledge Building
-Uses LLM to generate intelligent summaries of classes and methods with contextual information.
-
-```bash
-python build_knowledge.py -i <input_directory> -m <mode> [-filter <pattern>]
-```
-
-**Options:**
-- `-i, --input-dir`: Project directory (required)
-- `-m, --mode`: Processing mode - `Pre`, `Final`, or `Embedd`
-- `-filter`: Filter files by name (prefix with `!` to exclude)
-
-**Processing Modes:**
-- `Final`: LLM summarization with dependency context
-- `Embedd`: Generate embeddings for semantic search
-
-**Output:** `.ai-agent/db_final.json` with LLM summaries and embeddings database
-
-### Interactive Chat
-Provides an interactive Q&A interface with access to analyzed codebase.
-
-```bash
-python -m interact.chat <project_directory>
-```
-
-**Features:**
-- Natural language queries about code
-- Semantic search across codebase
-- Context-aware responses using RAG
-- File content retrieval and analysis
-
-## Configuration
-
-### LLM Backend Options
-
-**Ollama (Local):**
-```json
-{
-  "llm": {
-    "mode": "ollama",
-    "ollama": {
-      "url": "http://localhost:11434",
-      "model": "gemma3:12b",
-      "temperature": 0.7
-    }
-  }
-}
-```
-
-**MLX (Apple Silicon):**
-```json
-{
-  "llm": {
-    "mode": "mlx",
-    "mlx": {
-      "model": "mlx-community/gemma-3-12b-it-qat-4bit",
-      "temperature": 0.7
-    }
-  }
-}
-```
-
-**Anthropic Claude:**
-```json
-{
-  "llm": {
-    "mode": "anthropic",
-    "anthropic": {
-      "key": "YOUR_ANTHROPIC_API_KEY",
-      "model": "claude-3-5-sonnet-latest"
-    }
-  }
-}
-```
-
-### Source Directories
-Specify which directories contain your source code:
-
+In `config.json` specify which directories contain your source code:
 ```json
 {
   "source_dirs": [
@@ -266,6 +148,47 @@ Specify which directories contain your source code:
     "library/src/main/kotlin"
   ]
 }
+```
+
+## 3. Build knowledge
+
+### Step 1: Static Analysis
+Analyzes Java and Kotlin source files to extract class structures, methods, and dependencies. Creates `<your-project>/.ai-agent/db_preprocess.json`.
+
+```bash
+python static_analysis.py -i /path/to/your/project
+```
+
+### Step 2: Knowledge Building
+Uses LLM to generate intelligent summaries of classes and methods with contextual information. Creates `ai-agent/db_final.json` with LLM summaries and embeddings database. 
+This step will take a significant amount of time. Macbook M1 Pro with 32GB RAM and using Qwen3-14b, will take 2 days for processing a project with ~1300 files.
+Database is created incrementally, using already processed files as a context for the next ones. After each processed file, output file is updated to avoid loosing progress.
+
+```bash
+python build_knowledge.py -i /path/to/your/project -m Final [-f "MainActivity"]
+```
+
+### Step 3: Create embeddings for search
+```bash
+python build_knowledge.py -i /path/to/your/project -m Embedd
+```
+
+### Step 4: Interaction
+The project is ready for interaction:
+
+Chat:
+```bash
+python chat.py -i /path/to/your/project
+```
+
+CLI:
+
+```bash
+cli.py [-h] -i INPUT_DIR [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--log-file LOG_FILE] [--llm-log-file LLM_LOG_FILE] {similarity_search,bm25_search,summarize_project}
+
+python cli.py -i /path/to/your/project similarity_search "Update status interval"
+python cli.py -i /path/to/your/project bm25_search "Update status interval"
+python cli.py -i /path/to/your/project summarize_project
 ```
 
 ## Output Files
