@@ -296,7 +296,7 @@ class KotlinParser(BaseParser):
     
     def _get_node_text(self, node: tree_sitter.Node, file_content: str) -> str:
         """Extract text content of a node."""
-        return file_content[node.start_byte:node.end_byte]
+        return str(node.text, encoding='utf-8')
     
     def _find_child_by_type(self, node: tree_sitter.Node, node_type: str) -> Optional[tree_sitter.Node]:
         """Find the first child node of a specific type."""

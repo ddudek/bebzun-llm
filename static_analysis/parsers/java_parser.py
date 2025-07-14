@@ -60,7 +60,7 @@ class JavaParser(BaseParser):
 
     def _get_node_text(self, node: tree_sitter.Node, file_content: str) -> str:
         """Extract text content of a node."""
-        return file_content[node.start_byte:node.end_byte]
+        return str(node.text, encoding='utf-8')
 
     def _extract_package_name(self, root_node: tree_sitter.Node, file_content: str) -> str:
         """Extract the package name from the file."""
