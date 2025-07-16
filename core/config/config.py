@@ -26,6 +26,8 @@ class LlmConfig(BaseModel):
     mlx: MlxConfig = Field(default_factory=MlxConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
+    max_context: int = Field(default=128000)
+    warn_context: int = Field(default=90000)
 
 class Config(BaseModel):
     source_dirs: List[str]

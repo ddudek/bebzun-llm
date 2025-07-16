@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple, NamedTuple
 
 from static_analysis.parsers.kotlin_parser import KotlinParser
-
+from static_analysis.model.model import ClassStructure
 
 class KotlinTestCase(NamedTuple):
     """Test case data for a Kotlin class."""
     name: str
     path: Path
     dependencies_paths: List[Path]
+    expected_class_count: str
     expected_classname: str
     expected_full_classname: str
     expected_methods: Dict[str, Dict[str, int]]
@@ -30,9 +31,9 @@ class TestKotlinParser(unittest.TestCase):
         
         # Prepare test cases
         self.test_cases = {
-            'SimpleKotlinClass': self._create_simple_kotlin_class_test_case(),
-            'DataProcessor': self._create_data_processor_test_case(),
-            'ProcessingMetadata': self._create_processing_metadata_test_case()
+            'com.example.demo.SimpleKotlinClass': self._create_simple_kotlin_class_test_case(),
+            'com.example.data.DataProcessor': self._create_data_processor_test_case(),
+            'com.example.demo.ProcessingMetadata': self._create_processing_metadata_test_case()
         }
     
     def _create_simple_kotlin_class_test_case(self) -> KotlinTestCase:
@@ -50,11 +51,11 @@ class TestKotlinParser(unittest.TestCase):
         expected_excluded_methods = {'privateMethod', 'create'}
         
         expected_dependencies = {
-            'KotlinDependency': {
+            'com.example.demo.dependency.KotlinDependency': {
                 'full_name': 'com.example.demo.dependency.KotlinDependency',
                 'expected_lines': [11, 16, 17, 23, 24, 31, 34, 49]  # Line numbers where KotlinDependency is used
             },
-            'AnotherKotlinDependency': {
+            'com.example.demo.dependency.AnotherKotlinDependency': {
                 'full_name': 'com.example.demo.dependency.AnotherKotlinDependency',
                 'expected_lines': [32, 34]  # Line numbers where AnotherKotlinDependency is used
             }
@@ -64,6 +65,7 @@ class TestKotlinParser(unittest.TestCase):
             name='SimpleKotlinClass',
             path=path_tested_class,
             dependencies_paths=[path_dependency_1, path_dependency_2],
+            expected_class_count=1,
             expected_classname='SimpleKotlinClass',
             expected_full_classname='com.example.demo.SimpleKotlinClass',
             expected_methods=expected_methods,
@@ -87,15 +89,15 @@ class TestKotlinParser(unittest.TestCase):
         expected_excluded_methods = {'internalProcess', 'createDefault'}
         
         expected_dependencies = {
-            'ConfigurationHelper': {
+            'com.example.data.other.ConfigurationHelper': {
                 'full_name': 'com.example.data.other.ConfigurationHelper',
                 'expected_lines': [12, 20, 22, 29, 32, 34, 49, 50, 59, 61]
             },
-            'LoggingService': {
+            'com.example.data.other.LoggingService': {
                 'full_name': 'com.example.data.other.LoggingService',
                 'expected_lines': [30, 33]
             },
-            'SimpleCalculator': {
+            'com.example.data.other.SimpleCalculator': {
                 'full_name': 'com.example.data.other.SimpleCalculator',
                 'expected_lines': [14, 42]
             }
@@ -105,6 +107,7 @@ class TestKotlinParser(unittest.TestCase):
             name='DataProcessor',
             path=path_tested_class,
             dependencies_paths=[path_config_helper, path_logging_service, path_simple_calculator],
+            expected_class_count=2,
             expected_classname='DataProcessor',
             expected_full_classname='com.example.data.DataProcessor',
             expected_methods=expected_methods,
@@ -122,9 +125,10 @@ class TestKotlinParser(unittest.TestCase):
         expected_dependencies = {}
         
         return KotlinTestCase(
-            name='ProcessingMetadata',
+            name='com.example.data.ProcessingMetadata',
             path=path_tested_class,
             dependencies_paths=[],
+            expected_class_count=2,
             expected_classname='ProcessingMetadata',
             expected_full_classname='com.example.data.ProcessingMetadata',
             expected_methods=expected_methods,
@@ -138,7 +142,7 @@ class TestKotlinParser(unittest.TestCase):
             with self.subTest(f"Testing {test_name}"):
                 # SETUP - Expected results
                 # For DataProcessor.kt file we expect 2 classes
-                expected_class_count = 2 if test_name in ['DataProcessor', 'ProcessingMetadata'] else 1
+                expected_class_count = test_case.expected_class_count
                 expected_simple_classname = test_case.expected_classname
                 expected_full_classname = test_case.expected_full_classname
                 expected_source_file = test_case.path.name
@@ -165,7 +169,7 @@ class TestKotlinParser(unittest.TestCase):
                     print(f"Error printing tree for {test_case.path}: {e}")
                 print(f"--- End printing tree for {test_name} ---\n")
                 # EXECUTE - Parse the file
-                classes = self.parser.parse_file(test_case.path, test_case.path.parent)
+                classes = self.parser.extract_classes(test_case.path, test_case.path.parent)
                 
                 # ASSERT - Verify results
                 self.assertEqual(len(classes), expected_class_count,
@@ -208,7 +212,7 @@ class TestKotlinParser(unittest.TestCase):
                 print(f"\n{'='*80}\nTESTING DEPENDENCIES FOR: {test_name}\n{'='*80}")
                 
                 # SETUP - Test data and expected results
-                known_classes = {test_case.expected_classname}
+                known_classes = {test_case.expected_full_classname}
                 for dep_name in test_case.expected_dependencies:
                     known_classes.add(dep_name)
                 
@@ -222,15 +226,23 @@ class TestKotlinParser(unittest.TestCase):
                 # EXECUTE - Extract dependencies
                 with open(test_case.path, 'r', encoding='utf-8') as f:
                     file_content = f.read()
-                dependencies = self.parser.extract_dependencies(file_content, test_case.expected_classname, known_classes)
+
+                cls = ClassStructure(
+                    simple_classname = test_case.expected_classname,
+                    full_classname = test_case.expected_full_classname,
+                    dependencies = [],
+                    public_methods = [],
+                    source_file = str(test_case.path),
+                )
+                dependencies = self.parser.extract_dependencies(file_content, cls, known_classes)
                 
                 # ASSERT - Verify results
-                dependency_names = {name for name, _, _ in dependencies}
+                dependency_names = {name for name, _ in dependencies}
                 
                 # Build a map of actual dependencies for easier comparison
                 actual_dependencies = {}
-                for simple_name, full_name, usage_lines in dependencies:
-                    actual_dependencies[simple_name] = {
+                for full_name, usage_lines in dependencies:
+                    actual_dependencies[full_name] = {
                         'full_name': full_name,
                         'actual_lines': set(usage_lines)
                     }
@@ -277,7 +289,7 @@ class TestKotlinParser(unittest.TestCase):
                     
                     # Verify exact match between expected and actual usage lines
                     self.assertEqual(expected_lines_set, actual['actual_lines'],
-                                    f"Usage line mismatch for {dep_name}:\n"
+                                    f"\nUsage line mismatch for {dep_name}:\n"
                                     f"Expected: {sorted(expected_lines_set)}\n"
                                     f"Actual: {sorted(actual['actual_lines'])}")
         

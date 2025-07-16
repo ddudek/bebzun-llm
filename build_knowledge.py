@@ -258,27 +258,31 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
         # dep_usage is of type DepUsage
         # dep_usage.reference is ClassSummaryOutput (contains file path and summary of the class *using* the dependency)
         # dep_usage.dep is DependencyStruct (contains full_classname of the *used* dependency and usage_lines)
-        filecontext += "\n"
         using_class_summary = dep_usage.reference
         used_class_name = dep_usage.dep.full_classname
         usage_file_rel_path = dep_usage.reference.source_file # Relative path of the file where the usage occurs
         usage_line_numbers = dep_usage.dep.usage_lines # List of line numbers (1-based) where usage occurs
 
+        # skip quoting if it's the same file.
+        if usage_file_rel_path == rel_path:
+            continue
+
+        filecontext += "\n"
+
         filecontext += f"# Usage: {using_class_summary.full_classname} is using {used_class_name} in file '{usage_file_rel_path}'\n"
-        
         final_context = knowledge_store.get_class_description(using_class_summary.full_classname)
         if final_context:
             if add_usages_summaries:
-                filecontext += f"{final_context.simple_classname} explanation: {final_context.summary}\n"
+                filecontext += f"{final_context.simple_classname} summary: {final_context.summary}\n"
             if add_usages_methods:
                 for method in final_context.methods:
                     if "get" not in method.method_name:
                         filecontext += f"- Method {method.method_name}: {method.method_summary}\n"
-        
+
         # Construct absolute path for reading the file where usage occurs
         # base_dir is a parameter of llm_final_process_file
         abs_usage_file_path = os.path.join(base_dir, usage_file_rel_path) if base_dir else usage_file_rel_path
-        
+
         # Get content of the usage file
         usage_file_content_str = get_file_content_safe(abs_usage_file_path)
 
@@ -352,7 +356,7 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
                             # This line is not included, move to the next line
                             current_block_idx += 1
         else:
-            filecontext += f"  [INFO] Could not read content of '{usage_file_rel_path}' or it is a binary file.\n"
+            print(f"  [INFO] Could not read content of '{usage_file_rel_path}' or it is a binary file.\n")
         filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
 
     # Print dependency files for debugging

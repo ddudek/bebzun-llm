@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 class ClassStructureDependency(BaseModel):
     """A class or interface used by the class being summarized"""
 
-    simple_classname: str = Field(description="Simple name of a class or interface")
     full_classname: str = Field(description="The fully-qualified name of a class or interface being used including package (e.g., `com.example.MyClass`)")
     usage_lines: List[int] = Field(description="Line numbers where this dependency is used", default_factory=list)
 

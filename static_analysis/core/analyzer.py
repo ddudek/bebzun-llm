@@ -58,7 +58,7 @@ class CodebaseAnalyzer:
         print(f"Found {len(all_classes)} class.")
         
         # Build a set of known class names for dependency analysis
-        known_classes = {cls.simple_classname for cls in all_classes}
+        known_classes = {cls.full_classname for cls in all_classes}
         
         # Second pass: analyze dependencies and methods
         print("Analyzing dependencies and methods...")
@@ -114,12 +114,12 @@ class CodebaseAnalyzer:
         
         # Process Java files
         for file_path in java_files:
-            classes = self.java_parser.parse_file(file_path, input_dir)
+            classes = self.java_parser.extract_classes(file_path, input_dir)
             all_classes.extend(classes)
         
         # Process Kotlin files
         for file_path in kotlin_files:
-            classes = self.kotlin_parser.parse_file(file_path, input_dir)
+            classes = self.kotlin_parser.extract_classes(file_path, input_dir)
             all_classes.extend(classes)
         
         return all_classes
@@ -166,7 +166,7 @@ class CodebaseAnalyzer:
 
             # Extract dependencies
             dependencies = parser.extract_dependencies(
-                file_content, cls.simple_classname, known_classes
+                file_content, cls, known_classes
             )
             
             # Extract methods
@@ -177,11 +177,10 @@ class CodebaseAnalyzer:
             # Create dependency structs
             dependency_structs = [
                 ClassStructureDependency(
-                    simple_classname=simple_name,
                     full_classname=full_name,
                     usage_lines=usage_lines
                 )
-                for simple_name, full_name, usage_lines in dependencies
+                for full_name, usage_lines in dependencies
             ]
             
             # Create method structs

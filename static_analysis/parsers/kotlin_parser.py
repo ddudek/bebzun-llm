@@ -81,7 +81,7 @@ class KotlinParser(BaseParser):
         
         return None
     
-    def parse_file(self, file_path: Path, input_dir: Path) -> List[ClassStructure]:
+    def extract_classes(self, file_path: Path, input_dir: Path) -> List[ClassStructure]:
         """
         Parse a Kotlin source file and extract class information.
         
@@ -94,103 +94,102 @@ class KotlinParser(BaseParser):
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
                 file_content = file.read()
+
+            relative_path = file_path.relative_to(input_dir)
+
+            classes = []
+
+            # Parse the file content with tree-sitter
+            tree = self._parse_with_tree_sitter(file_content)
+            if not tree:
+                return classes
             
-            return self.extract_class_info(file_path, input_dir, file_content)
+            # Extract package name from the file
+            package_name = self._extract_package_name(tree.root_node, file_content)
+            if not package_name:
+                print(f"Error: can't find package name for {file_path}")
+                return classes
+            
+            # Find all class declarations (regular classes and data classes)
+            class_nodes = self._find_class_nodes_in_file(tree.root_node)
+            
+            # Process each class
+            for class_node in class_nodes:
+                # Find the class name - it's a direct child identifier
+                class_name_node = None
+                for child in class_node.children:
+                    if child.type == 'identifier':
+                        class_name_node = child
+                        break
+                
+                if not class_name_node:
+                    continue
+                
+                simple_classname = self._get_node_text(class_name_node, file_content)
+
+                # nested classes eg. SomeState.Success
+                simple_classname_nested = self._find_nested_classname(simple_classname, class_node)
+
+                full_classname = f"{package_name}.{simple_classname_nested}"
+
+                # Create ClassSummaryOutput
+                class_summary = ClassStructure(
+                    simple_classname=simple_classname,
+                    full_classname=full_classname,
+                    dependencies=[],
+                    public_methods=[],
+                    source_file=str(relative_path)
+                )
+                classes.append(class_summary)
+            
+            return classes
+            
         except Exception as e:
             print(f"Error parsing Kotlin file {file_path}: {str(e)}")
             return []
-    
-    def extract_class_info(self, file_path: Path, input_dir: Path, file_content: str) -> List[ClassStructure]:
-        """
-        Extract class information from a Kotlin source file.
         
-        Args:
-            file_path: Path to the Kotlin source file
-            file_content: Content of the file
-            
-        Returns:
-            List of ClassSummaryOutput objects representing classes found in the file
-        """
-        classes = []
-        
-        # Parse the file content with tree-sitter
-        tree = self._parse_with_tree_sitter(file_content)
-        if not tree:
-            return classes
-        
-        # Extract package name from the file
-        package_name = self._extract_package_name(tree.root_node, file_content)
-        
-        # Find all class declarations (regular classes and data classes)
-        class_nodes = []
-        class_nodes.extend(self._find_nodes_by_type(tree.root_node, 'class_declaration'))
-        class_nodes.extend(self._find_nodes_by_type(tree.root_node, 'object_declaration'))
-        
-        # Extract known classes for dependency resolution
-        known_classes = set()
-        for node in class_nodes:
-            # In Kotlin AST, the class name is directly under class_declaration as 'identifier'
-            for child in node.children:
-                if child.type == 'identifier':
-                    class_name = self._get_node_text(child, file_content)
-                    known_classes.add(class_name)
-                    break
-        
-        # Process each class
-        for class_node in class_nodes:
-            # Find the class name - it's a direct child identifier
-            class_name_node = None
-            for child in class_node.children:
-                if child.type == 'identifier':
-                    class_name_node = child
-                    break
-            
-            if not class_name_node:
-                continue
-            
-            simple_classname = self._get_node_text(class_name_node, file_content)
-            full_classname = f"{package_name}.{simple_classname}" if package_name else simple_classname
-            
-            # Extract dependencies for this class
-            dependencies = self.extract_dependencies(file_content, simple_classname, known_classes)
-            dependency_structs = []
-            for dep_simple, dep_full, usage_lines in dependencies:
-                dependency_structs.append(ClassStructureDependency(
-                    simple_classname=dep_simple,
-                    full_classname=dep_full,
-                    usage_lines=usage_lines
-                ))
-            
-            # Extract public methods for this class
-            methods = self.extract_methods(file_content, simple_classname)
-            method_structs = []
-            for method_name, start_line, end_line in methods:
-                method_structs.append(ClassStructureMethod(
-                    name=method_name,
-                    definition_start=start_line,
-                    definition_end=end_line
-                ))
-            
-            relative_path = file_path.relative_to(input_dir)
+    def _find_nested_classname(self, simple_classname, class_node):
+        if not class_node.parent or class_node == class_node.parent:
+            return simple_classname
 
-            # Create ClassSummaryOutput
-            class_summary = ClassStructure(
-                simple_classname=simple_classname,
-                full_classname=full_classname,
-                dependencies=dependency_structs,
-                public_methods=method_structs,
-                source_file=str(relative_path)
-            )
-            classes.append(class_summary)
-        
-        return classes
+        if class_node.parent and class_node.parent.parent and class_node.parent.parent.type == 'class_declaration':
+            parent_class_node = class_node.parent.parent
+            for child in parent_class_node.children:
+                if child.type == 'identifier':
+                    simple_classname = f"{self._get_node_text(child)}.{simple_classname}"
+                    simple_classname = self._find_nested_classname(simple_classname, parent_class_node)
+                    break
+
+        return simple_classname
+    
+    def _find_class_nodes_in_file(self, root_node: tree_sitter.Node) -> List[tree_sitter.Node]:
+        class_nodes = []
+        class_nodes.extend(self._find_nodes_by_type(root_node, 'class_declaration'))
+        class_nodes.extend(self._find_nodes_by_type(root_node, 'object_declaration'))
+
+        compose_fun_nodes = self._find_nodes_by_type(root_node, 'function_declaration')
+        for fun_node in compose_fun_nodes:
+            modifiers = self._find_nodes_by_type(fun_node, 'modifiers')
+            for modifier in modifiers:
+                modifiers_text = self._get_node_text(modifier)
+                if 'Composable' in modifiers_text and 'Preview' not in modifiers_text:
+                    class_name = None
+                    for child in fun_node.children:
+                        if child.type == 'identifier':
+                            class_name = self._get_node_text(child)
+                            if (class_name[0].isupper()):
+                                class_nodes.append(fun_node)
+                            break
+                    break
+                
+        return class_nodes
     
     def extract_dependencies(
         self,
         file_content: str,
-        class_name: str,
+        class_structure: ClassStructure,
         known_classes: Set[str]
-    ) -> List[Tuple[str, str, List[int]]]:
+    ) -> List[Tuple[str, List[int]]]:
         """
         Extract dependencies (classes used) from a Kotlin class.
         
@@ -212,24 +211,29 @@ class KotlinParser(BaseParser):
         # Extract imports to map simple names to full names
         imports = self._extract_imports(tree.root_node, file_content)
         
+        package_name = self._extract_package_name(tree.root_node, file_content)
+        if not package_name:
+            print(f"Warning: can't find package name for {class_structure.full_classname}")
+            return []
+
         # Find the target class node
-        class_node = self._find_class_node(tree.root_node, class_name, file_content)
+        class_node = self._find_class_node(tree.root_node, class_structure.simple_classname, file_content)
         if not class_node:
             return []
         
         # Track dependencies by walking the class AST recursive, keeping the scope
         # Build symbol table for scope
         parent_symbol_table = {}
-        self._look_for_dependencies_scope_recursive(class_node, file_content, known_classes, imports, dependencies, parent_symbol_table)
+        self._look_for_dependencies_scope_recursive(class_node, file_content, package_name, known_classes, imports, dependencies, parent_symbol_table)
         
         # Remove self-references
-        if class_name in dependencies:
-            del dependencies[class_name]
+        if class_structure.full_classname in dependencies:
+            del dependencies[class_structure.full_classname]
         
         # Convert to list format
         result = []
         for dep_name, dep_info in dependencies.items():
-            result.append((dep_name, dep_info['full_name'], sorted(list(dep_info['lines']))))
+            result.append((dep_info['full_name'], sorted(list(dep_info['lines']))))
         
         return result
     
@@ -261,7 +265,7 @@ class KotlinParser(BaseParser):
             return methods
         
         # Find the class body
-        class_body = self._find_child_by_type(class_node, 'class_body')
+        class_body = self._find_direct_child_by_type(class_node, 'class_body')
         if not class_body:
             return methods
         
@@ -294,11 +298,11 @@ class KotlinParser(BaseParser):
     
     # Helper methods
     
-    def _get_node_text(self, node: tree_sitter.Node, file_content: str) -> str:
+    def _get_node_text(self, node: tree_sitter.Node, file_content: str = "") -> str:
         """Extract text content of a node."""
         return str(node.text, encoding='utf-8')
     
-    def _find_child_by_type(self, node: tree_sitter.Node, node_type: str) -> Optional[tree_sitter.Node]:
+    def _find_direct_child_by_type(self, node: tree_sitter.Node, node_type: str) -> Optional[tree_sitter.Node]:
         """Find the first child node of a specific type."""
         for child in node.children:
             if child.type == node_type:
@@ -328,8 +332,7 @@ class KotlinParser(BaseParser):
     
     def _find_class_node(self, root_node: tree_sitter.Node, class_name: str, file_content: str) -> Optional[tree_sitter.Node]:
         """Find a class node by name."""
-        class_nodes = self._find_nodes_by_type(root_node, 'class_declaration')
-        class_nodes.extend(self._find_nodes_by_type(root_node, 'object_declaration'))
+        class_nodes = self._find_class_nodes_in_file(root_node)
         
         for node in class_nodes:
             # The class name is a direct child identifier
@@ -362,19 +365,23 @@ class KotlinParser(BaseParser):
         self,
         node: tree_sitter.Node,
         file_content: str,
+        package: str,
         known_classes: Set[str],
+        imports: Dict[str, str],
         symbol_table_out: Dict[str, str],
     ):
         for child in node.children:
             if child.type not in self.new_scope_node_types:
-                self._build_symbol_table_current_scope_recursive(child, file_content, known_classes, symbol_table_out)
+                self._build_symbol_table_current_scope_recursive(child, file_content, package, known_classes, imports, symbol_table_out)
         return
     
     def _build_symbol_table_current_scope_recursive(
         self,
         node: tree_sitter.Node,
         file_content: str,
+        package: str,
         known_classes: Set[str],
+        imports: Dict[str, str],
         symbol_table_out: Dict[str, str],
     ):
         """Build a symbol table mapping variable names to their types."""
@@ -385,57 +392,63 @@ class KotlinParser(BaseParser):
 
         # Handle primary constructor parameters
         if node.type == 'class_parameter':
-            param_name_node = self._find_child_by_type(node, 'identifier')
+            param_name_node = self._find_direct_child_by_type(node, 'identifier')
             param_type_node = self._find_node_by_type(node, 'user_type')
             if param_name_node and param_type_node:
                 param_name = self._get_node_text(param_name_node, file_content)
                 type_id = self._find_node_by_type(param_type_node, 'identifier')
                 if type_id:
                     type_name = self._get_node_text(type_id, file_content)
-                    if type_name in known_classes:
+                    full_name = imports.get(type_name, f"{package}.{type_name}")
+                    if full_name in known_classes:
                         if self.verbose:
                             print(f"[DEBUG] Found class param - {param_name}: {type_name}")
-                        symbol_table_out[param_name] = type_name
+                        symbol_table_out[param_name] = full_name
         
         # Handle property declarations
         if node.type == 'property_declaration':
-            var_decl = self._find_child_by_type(node, 'variable_declaration')
+            var_decl = self._find_direct_child_by_type(node, 'variable_declaration')
             type_node = self._find_node_by_type(node, 'user_type')
+            if not type_node:
+                type_node = self._find_node_by_type(node, 'call_expression')
             if var_decl and type_node:
-                var_id = self._find_child_by_type(var_decl, 'identifier')
+                var_id = self._find_direct_child_by_type(var_decl, 'identifier')
                 type_id = self._find_node_by_type(type_node, 'identifier')
                 if var_id and type_id:
                     var_name = self._get_node_text(var_id, file_content)
                     type_name = self._get_node_text(type_id, file_content)
-                    if type_name in known_classes:
+                    full_name = imports.get(type_name, f"{package}.{type_name}")
+                    if full_name in known_classes:
                         if self.verbose:
                             print(f"[DEBUG] Found property - {var_name}: {type_name}")
-                        symbol_table_out[var_name] = type_name
+                        symbol_table_out[var_name] = full_name
         
         # Handle function parameters
         if node.type == 'function_value_parameters':
             for param in self._find_nodes_by_type(node, 'parameter'):
-                param_name_node = self._find_child_by_type(param, 'identifier')
+                param_name_node = self._find_direct_child_by_type(param, 'identifier')
                 param_type_node = self._find_node_by_type(param, 'user_type')
                 if param_name_node and param_type_node:
                     param_name = self._get_node_text(param_name_node, file_content)
                     type_id = self._find_node_by_type(param_type_node, 'identifier')
                     if type_id:
                         type_name = self._get_node_text(type_id, file_content)
-                        if type_name in known_classes:
+                        full_name = imports.get(type_name, f"{package}.{type_name}")
+                        if full_name in known_classes:
                             if self.verbose:
                                 print(f"[DEBUG] Found function param - {param_name}: {type_name}")
-                            symbol_table_out[param_name] = type_name
+                            symbol_table_out[param_name] = full_name
         
         # Recurse into children
         for child in node.children:
             if child.type not in self.new_scope_node_types:
-                self._build_symbol_table_current_scope_recursive(child, file_content, known_classes, symbol_table_out)
+                self._build_symbol_table_current_scope_recursive(child, file_content, package, known_classes, imports, symbol_table_out)
     
     def _look_for_dependencies_scope_recursive(
         self,
         node: tree_sitter.Node,
         file_content: str,
+        package: str,
         known_classes: Set[str],
         imports: Dict[str, str],
         dependencies_output: Dict[str, Dict[str, any]],
@@ -447,46 +460,46 @@ class KotlinParser(BaseParser):
         local_symbol_table = parent_symbol_table
         if node.type in self.new_scope_node_types:
             local_symbol_table = parent_symbol_table.copy()
-            self._build_symbol_table_current_scope(node, file_content, known_classes, local_symbol_table)
+            self._build_symbol_table_current_scope(node, file_content, package, known_classes, imports, local_symbol_table)
 
         # Look for type references
         if node.type == 'user_type':
-            identifier_node = self._find_child_by_type(node, 'identifier')
+            identifier_node = self._find_direct_child_by_type(node, 'identifier')
             if identifier_node:
                 type_name = self._get_node_text(identifier_node, file_content)
-                if type_name in known_classes:
+                full_name = imports.get(type_name, f"{package}.{type_name}")
+                if full_name in known_classes:
                     line_number = node.start_point[0] + 1
-                    if type_name not in dependencies_output:
-                        full_name = imports.get(type_name, type_name)
-                        dependencies_output[type_name] = {
+                    if full_name not in dependencies_output:
+                        dependencies_output[full_name] = {
                             'full_name': full_name,
                             'lines': set()
                         }
-                    dependencies_output[type_name]['lines'].add(line_number)
+                    dependencies_output[full_name]['lines'].add(line_number)
         
         # Look for constructor calls
         elif node.type == 'call_expression':
             if node.children:
                 first_child = node.children[0]
                 if first_child.type in ['simple_identifier', 'identifier']:
-                    identifier_name = self._get_node_text(first_child, file_content)
-                    if identifier_name in known_classes:
+                    type_name = self._get_node_text(first_child, file_content)
+                    full_name = imports.get(type_name, f"{package}.{type_name}")
+                    if full_name in known_classes:
                         line_number = node.start_point[0] + 1
-                        if identifier_name not in dependencies_output:
-                            full_name = imports.get(identifier_name, identifier_name)
-                            dependencies_output[identifier_name] = {
+                        if full_name not in dependencies_output:
+                            dependencies_output[full_name] = {
                                 'full_name': full_name,
                                 'lines': set()
                             }
-                        dependencies_output[identifier_name]['lines'].add(line_number)
+                        dependencies_output[full_name]['lines'].add(line_number)
                 elif first_child.type == 'navigation_expression':
                     # Handle method calls like dep1.getName()
-                    self._handle_navigation_expression(first_child, file_content, known_classes, imports,
+                    self._handle_navigation_expression(first_child, file_content, package, known_classes, imports,
                                                      dependencies_output, local_symbol_table)
         
         # Look for property access
         elif node.type == 'navigation_expression':
-            self._handle_navigation_expression(node, file_content, known_classes, imports,
+            self._handle_navigation_expression(node, file_content, package, known_classes, imports,
                                              dependencies_output, local_symbol_table)
         
         # Look for simple identifier references (variables/parameters)
@@ -518,16 +531,15 @@ class KotlinParser(BaseParser):
             
             if parent and parent.type not in skip_parents:
                 var_name = self._get_node_text(node, file_content)
-                var_type = self._resolve_variable_type(var_name, parent_symbol_table)
-                if var_type and var_type in known_classes:
+                full_name = self._resolve_variable_type(var_name, parent_symbol_table)
+                if full_name and full_name in known_classes:
                     line_number = node.start_point[0] + 1
-                    if var_type not in dependencies_output:
-                        full_name = imports.get(var_type, var_type)
-                        dependencies_output[var_type] = {
+                    if full_name not in dependencies_output:                    
+                        dependencies_output[full_name] = {
                             'full_name': full_name,
                             'lines': set()
                         }
-                    dependencies_output[var_type]['lines'].add(line_number)
+                    dependencies_output[full_name]['lines'].add(line_number)
         
         # Look for string templates
         elif node.type == 'string_literal':
@@ -535,15 +547,15 @@ class KotlinParser(BaseParser):
             for child in node.children:
                 if child.type == 'interpolation':
                     # Track dependencies in interpolation expressions
-                    self._look_for_dependencies_scope_recursive(child, file_content, known_classes, imports,
+                    self._look_for_dependencies_scope_recursive(child, file_content, package, known_classes, imports,
                                                         dependencies_output, parent_symbol_table)
         
         # Look for variable declarations with initializers
         elif node.type == 'property_declaration':
             # Get the variable name
-            var_decl = self._find_child_by_type(node, 'variable_declaration')
+            var_decl = self._find_direct_child_by_type(node, 'variable_declaration')
             if var_decl:
-                var_id = self._find_child_by_type(var_decl, 'identifier')
+                var_id = self._find_direct_child_by_type(var_decl, 'identifier')
                 if var_id:
                     var_name = self._get_node_text(var_id, file_content)
                     # Look for initializer
@@ -556,17 +568,17 @@ class KotlinParser(BaseParser):
                                     line_number = child.start_point[0] + 1
                                     if type_name not in dependencies_output:
                                         full_name = imports.get(type_name, type_name)
-                                        dependencies_output[type_name] = {
+                                        dependencies_output[full_name] = {
                                             'full_name': full_name,
                                             'lines': set()
                                         }
-                                    dependencies_output[type_name]['lines'].add(line_number)
+                                    dependencies_output[full_name]['lines'].add(line_number)
                                     # Update symbol table dynamically
                                     parent_symbol_table[var_name] = type_name
         
         # Recurse into children, including companion objects
         for child in node.children:
-            self._look_for_dependencies_scope_recursive(child, file_content, known_classes, imports,
+            self._look_for_dependencies_scope_recursive(child, file_content, package, known_classes, imports,
                                                 dependencies_output, local_symbol_table)
     
     def _resolve_variable_type(self, var_name: str, symbol_table: Dict[str, str]) -> Optional[str]:
@@ -578,6 +590,7 @@ class KotlinParser(BaseParser):
         self,
         node: tree_sitter.Node,
         file_content: str,
+        package: str,
         known_classes: Set[str],
         imports: Dict[str, str],
         dependencies: Dict[str, Dict[str, any]],
@@ -585,35 +598,47 @@ class KotlinParser(BaseParser):
     ):
         """Handle navigation expressions like variable.method() or variable.property."""
         if node.children:
-            receiver = node.children[0]
-            if receiver.type == 'simple_identifier' or receiver.type == 'identifier':
-                var_name = self._get_node_text(receiver, file_content)
-                
-                # Try function-scoped lookup first
-                var_type = None
-                
-                # Fall back to class-level lookup
-                if not var_type:
+            for receiver in node.named_children:
+                if receiver.type == 'simple_identifier' or receiver.type == 'identifier':
+                    var_name = self._get_node_text(receiver, file_content)
+                    
+                    var_name_as_type = imports.get(var_name, var_name)
+
                     var_type = symbol_table.get(var_name)
 
-                # if receiver is a type, e.g. ExampleClass.something
-                if var_name in known_classes:
-                    var_type = var_name
-                
-                if var_type and var_type in known_classes:
-                    line_number = node.start_point[0] + 1
-                    if var_type not in dependencies:
-                        full_name = imports.get(var_type, var_type)
-                        dependencies[var_type] = {
-                            'full_name': full_name,
-                            'lines': set()
-                        }
-                    dependencies[var_type]['lines'].add(line_number)
+                    # if receiver is a type, e.g. ExampleClass.something
+                    var_name_as_type = imports.get(var_name, var_name)
+                    if var_name_as_type in known_classes:
+                        var_type = var_name_as_type
+
+                    # import com.example.SomeState
+                    # SomeState.Initial
+                    root_type = self._get_node_text(node.children[0])
+                    expression_as_type = self._get_node_text(node)
+                    if root_type in imports:
+                        expression_as_full_type = imports.get(root_type).replace(root_type, expression_as_type)
+                        if expression_as_full_type in known_classes:
+                            var_type = expression_as_full_type
+
+                    # no import
+                    # package + SomeState.Initial
+                    expression_as_full_type = f"{package}.{expression_as_type}"
+                    if expression_as_full_type in known_classes:
+                        var_type = expression_as_full_type
+                    
+                    if var_type and var_type in known_classes:
+                        line_number = node.start_point[0] + 1
+                        if var_type not in dependencies:
+                            dependencies[var_type] = {
+                                'full_name': var_type,
+                                'lines': set()
+                            }
+                        dependencies[var_type]['lines'].add(line_number)
     
     def _is_private_method(self, func_node: tree_sitter.Node, file_content: str) -> bool:
         """Check if a method is private."""
         # Look for modifiers
-        modifiers = self._find_child_by_type(func_node, 'modifiers')
+        modifiers = self._find_direct_child_by_type(func_node, 'modifiers')
         if modifiers:
             for child in modifiers.children:
                 if child.type == 'visibility_modifier':

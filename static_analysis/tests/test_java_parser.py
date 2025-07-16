@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple, NamedTuple
 
 from static_analysis.parsers.java_parser import JavaParser
-
+from static_analysis.model.model import ClassStructure
 
 class JavaTestCase(NamedTuple):
     """Test case data for a Java class."""
@@ -31,8 +31,8 @@ class TestJavaParser(unittest.TestCase):
         
         # Prepare test cases
         self.test_cases = {
-            'SimpleJavaClass': self._create_simple_java_class_test_case(),
-            'DataProcessor': self._create_data_processor_test_case()
+            'com.example.demo.SimpleJavaClass': self._create_simple_java_class_test_case(),
+            'com.example.data.DataProcessor': self._create_data_processor_test_case()
         }
     
     def _create_simple_java_class_test_case(self) -> JavaTestCase:
@@ -51,11 +51,11 @@ class TestJavaParser(unittest.TestCase):
         expected_excluded_methods = {'privateMethod'}
         
         expected_dependencies = {
-            'JavaDependency': {
+            'com.example.demo.dependency.JavaDependency': {
                 'full_name': 'com.example.demo.dependency.JavaDependency',
                 'expected_lines': [11, 13, 14, 20, 21, 27, 28, 35, 38, 52]  # Line numbers where JavaDependency is used
             },
-            'AnotherJavaDependency': {
+            'com.example.demo.dependency.AnotherJavaDependency': {
                 'full_name': 'com.example.demo.dependency.AnotherJavaDependency',
                 'expected_lines': [36, 38]  # Line numbers where AnotherJavaDependency is used
             }
@@ -89,15 +89,15 @@ class TestJavaParser(unittest.TestCase):
         expected_excluded_methods = {'internalProcess'}
         
         expected_dependencies = {
-            'ConfigurationHelper': {
+            'com.example.data.other.ConfigurationHelper': {
                 'full_name': 'com.example.data.other.ConfigurationHelper',
                 'expected_lines': [12, 15, 16, 22, 23, 30, 33, 35, 50, 51, 60]
             },
-            'LoggingService': {
+            'com.example.data.other.LoggingService': {
                 'full_name': 'com.example.data.other.LoggingService',
                 'expected_lines': [31, 34]
             },
-            'SimpleCalculator': {
+            'com.example.data.other.SimpleCalculator': {
                 'full_name': 'com.example.data.other.SimpleCalculator',
                 'expected_lines': [13, 43]
             }
@@ -147,7 +147,7 @@ class TestJavaParser(unittest.TestCase):
                 print(f"--- End printing tree for {test_name} ---\n")
                 
                 # EXECUTE - Parse the file
-                classes = self.parser.parse_file(test_case.path, test_case.path.parent)
+                classes = self.parser.extract_classes(test_case.path, test_case.path.parent)
                 
                 # ASSERT - Verify results
                 self.assertEqual(len(classes), expected_class_count,
@@ -177,7 +177,15 @@ class TestJavaParser(unittest.TestCase):
                 # EXECUTE - Extract dependencies
                 with open(test_case.path, 'r', encoding='utf-8') as f:
                     file_content = f.read()
-                dependencies = self.parser.extract_dependencies(file_content, test_case.expected_classname, known_classes)
+                
+                cls = ClassStructure(
+                    simple_classname = test_case.expected_classname,
+                    full_classname = test_case.expected_full_classname,
+                    dependencies = [],
+                    public_methods = [],
+                    source_file = str(test_case.path),
+                )
+                dependencies = self.parser.extract_dependencies(file_content, cls, known_classes)
                 
                 # ASSERT - Verify results
                 dependency_names = {name for name, _, _ in dependencies}

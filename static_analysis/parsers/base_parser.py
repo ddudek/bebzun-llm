@@ -18,8 +18,9 @@ class BaseParser(ABC):
     Defines the interface that all parser implementations must follow.
     """
     
+
     @abstractmethod
-    def parse_file(self, file_path: Path, input_dir: Path) -> List[ClassStructure]:
+    def extract_classes(self, file_path: Path, input_dir: Path) -> List[ClassStructure]:
         """
         Parse a source file and extract class information.
         
@@ -31,27 +32,13 @@ class BaseParser(ABC):
             List of ClassSummaryOutput objects representing classes found in the file
         """
         pass
-    
-    @abstractmethod
-    def extract_class_info(self, file_path: Path, input_dir: Path, file_content: str) -> List[ClassStructure]:
-        """
-        Extract class information from parsed file content.
-        
-        Args:
-            file_path: Path to the source file
-            input_dir: Path to the root of the codebase
-            file_content: Content of the source file
-            
-        Returns:
-            List of ClassSummaryOutput objects representing classes found in the file
-        """
-        pass
+
     
     @abstractmethod
     def extract_dependencies(
         self, 
         file_content: str, 
-        class_name: str, 
+        cls: ClassStructure, 
         known_classes: Set[str]
     ) -> List[Tuple[str, str, List[int]]]:
         """
@@ -59,7 +46,7 @@ class BaseParser(ABC):
         
         Args:
             file_content: Content of the source file
-            class_name: Name of the class to extract dependencies for
+            cls: class to extract dependencies for
             known_classes: Set of all known class names in the codebase
             
         Returns:
