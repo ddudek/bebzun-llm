@@ -192,8 +192,8 @@ class TestJavaParser(unittest.TestCase):
                 
                 # Build a map of actual dependencies for easier comparison
                 actual_dependencies = {}
-                for simple_name, full_name, usage_lines in dependencies:
-                    actual_dependencies[simple_name] = {
+                for full_name, usage_lines in dependencies:
+                    actual_dependencies[full_name] = {
                         'full_name': full_name,
                         'actual_lines': set(usage_lines)
                     }
@@ -204,8 +204,8 @@ class TestJavaParser(unittest.TestCase):
                     print(f"Missing dependencies for {test_name}: {missing}")
                     print(f"Dependencies found: {dependency_names}")
                     print(f"Dependencies details:")
-                    for name, full_name, lines in dependencies:
-                        print(f"  {name} ({full_name}): lines {lines}")
+                    for full_name, lines in dependencies:
+                        print(f"  {full_name}: lines {lines}")
                 
                 # Verify all expected dependencies are found with correct count
                 self.assertEqual(len(expected_dependencies), len(dependency_names),

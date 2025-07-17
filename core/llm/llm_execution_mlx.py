@@ -48,7 +48,7 @@ class MlxLlmExecution:
             full_prompt += message_formatted + "\n"
         self.logger.debug(f"LLM prompt: \n{full_prompt}\n---\nEnd of prompt, size: {prompt_size} b ({chars_to_tokens(prompt_size)} tks)")
 
-        verbose = self.logger.level == 'DEBUG'
+        verbose = True
         raw_response = generate(
             self.mlx_model, 
             self.mlx_tokenizer,

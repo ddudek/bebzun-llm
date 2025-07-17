@@ -3,7 +3,14 @@ import json
 import os
 from pathlib import Path
 from knowledge.model import ClassDescription, ClassDescriptionExtended
-from static_analysis.model.model import ClassStructure
+from static_analysis.model.model import ClassStructure, ClassStructureDependency
+
+class DepUsage:
+        parent_structure: ClassStructure
+        parent_description: Optional[ClassDescriptionExtended]
+        dep: ClassStructureDependency
+        dependency_structure: ClassStructure
+        dependency_description: Optional[ClassDescriptionExtended]
 
 class KnowledgeStore:
     def __init__(self):
@@ -35,7 +42,7 @@ class KnowledgeStore:
         # Look up by classname and return the class_summary from the storage object
         storage_obj = self.class_structure_dict.get(classname)
         return storage_obj if storage_obj else None
-    
+        
     def get_file_structure(self, filepath: str) -> List[ClassStructure]:
         """
         Retrieve all class summaries for a given filepath
@@ -240,3 +247,72 @@ class KnowledgeStore:
             
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             print(f"Error loading storage from {filepath}: {str(e)}")
+
+    
+    def get_class_dependencies(self, classname: str) -> List[ClassStructureDependency]:
+        # Look up by classname and return the class_summary from the storage object
+        storage_obj = self.class_structure_dict.get(classname)
+        return storage_obj.dependencies if storage_obj else []
+    
+    def get_file_dependencies(self, rel_path: str) -> Dict[str, DepUsage]:
+        # Look up by classname and return the class_summary from the storage object
+        dependencies: Dict[str, DepUsage] = {}
+
+        for parent_structure in self.get_file_structure(rel_path):
+            for dependency in parent_structure.dependencies:
+                dependency_structure = self.get_class_structure(dependency.full_classname)
+                dependency_description = self.get_class_description_extended(dependency.full_classname)
+                if dependency_structure is not None:
+                    dep_usage = DepUsage()
+                    dep_usage.parent_structure = parent_structure
+                    dep_usage.dep = dependency
+                    dep_usage.dependency_structure = dependency_structure
+                    dep_usage.dependency_description = dependency_description
+                    dependencies[dependency.full_classname] = dep_usage
+        
+        return dependencies
+    
+    def get_file_usages(self, rel_path: str) -> Dict[str, DepUsage]:
+        usages: Dict[str, DepUsage] = {}
+        
+        for class_structure in self.get_file_structure(rel_path):
+            target_classname = class_structure.full_classname
+            
+            for potential_use_parent in self.class_structure_dict.values():
+                # Check if the class represented by potential_user_class_storage uses target_classname_to_find_usages_for
+                for dep in potential_use_parent.dependencies:
+                    if dep.full_classname == target_classname:
+                        # The class from potential_user_class_storage uses target_classname_to_find_usages_for.
+                        # Store the summary of the *using* class.
+
+                        usage_description = self.get_class_description_extended(potential_use_parent.full_classname)
+
+                        dep_usage = DepUsage()
+                        dep_usage.parent_structure = potential_use_parent
+                        dep_usage.parent_description = usage_description
+                        dep_usage.dep = dep
+                        dep_usage.dependency_structure = class_structure
+                        dep_usage.dependency_description = None
+                        usages[potential_use_parent.full_classname] = dep_usage
+                        break
+        return usages
+    
+    def get_class_usages(self, target_classname: str) -> Dict[str, DepUsage]:
+        usages: Dict[str, DepUsage] = {}
+        
+        for potential_use_class_structure in self.class_structure_dict.values():
+            # Check if the class represented by potential_user_class_storage uses target_classname_to_find_usages_for
+            for dep in potential_use_class_structure.dependencies:
+                if dep.full_classname == target_classname:
+                    # The class from potential_user_class_storage uses target_classname_to_find_usages_for.
+                    # Store the summary of the *using* class.
+
+                    usage_description = self.get_class_description_extended(potential_use_class_structure.full_classname)
+
+                    dep_usage = DepUsage()
+                    dep_usage.dep = dep
+                    dep_usage.structure = potential_use_class_structure
+                    dep_usage.dependency_description = usage_description
+                    usages[potential_use_class_structure.full_classname] = dep_usage
+                    break
+        return usages

@@ -26,7 +26,7 @@ class ClassDescription(BaseModel):
     simple_classname: str = Field(description="Simple class name without package (important!)")
     full_classname: str = Field(description="Full class name including package (important!)")
     summary: str = Field(description="An explanation of what this class does or contains. Begin with simple class name(!), then continue with explanation. The purpose of this summary will be to explain the class as a context to understand how the project works. Please explain how this class behaves, which and how other classes use it. For Enums and sealed data classes like UI states please explain what particular state causes. Include details that are not related to the filename.")
-    category: Literal['UI', 'Logic', 'Data', 'Other'] = Field(description="Category of this class. UI: presentation layer of the app. Logic: classes containg important logic implemented. Data: External layer of the app, using database, 3rd party library wrappers, platform APIs")
+    category: Literal['UI', 'Logic', 'Data', 'Testing', 'Other'] = Field(description="Category of this class. UI: presentation layer of the app. Logic: classes containg important logic implemented. Data: External layer of the app, using database, 3rd party library wrappers, platform APIs. Testing: Test helpers and test classes. Other: Other usages.")
     questions: List[str] = Field(description="3 general questions about the project that this class would be a part of explanation. Avoid mentioning this class explicitly, focus on what is it used for, or which bigger feature uses it.", default=[])
     features: List[str] = Field(description="List of at least 3 features that this class relates to", default=[])
     methods: List[MethodDescription] = Field(description="List of public methods")
@@ -38,18 +38,18 @@ class ClassDescription(BaseModel):
                 prop.pop('title', None)
                 prop.pop('description', None)
 
-    def describe(self) -> str:
-        embedd_summary = f"{self.summary}"
+    def describe(self, bullet: str = " ", check_in_content: Optional[str] = None) -> str:
+        summary = f"{self.summary}"
         if self.methods:
-            embedd_summary += "\nMethods:"
             for method in self.methods:
-                embedd_summary+=(f"\n Method `{method.method_name}`: {method.method_summary}")
+                if not check_in_content or (check_in_content and method.method_name in check_in_content):
+                    summary+=(f"\n{bullet}Method `{method.method_name}`: {method.method_summary}")
 
         if self.variables:
-            embedd_summary += "\nProperties:"
             for variable_entry in self.variables:
-                embedd_summary+=(f"\n Property `{variable_entry.variable_name}`: {variable_entry.variable_summary}")
-        return embedd_summary
+                if not check_in_content or (check_in_content and variable_entry.variable_name in check_in_content):
+                    summary+=(f"\n{bullet}Property `{variable_entry.variable_name}`: {variable_entry.variable_summary}")
+        return summary
 
 class ClassDescriptionExtended(BaseModel):
     """Storage model for ClassFinalSummaryOutput with file path"""

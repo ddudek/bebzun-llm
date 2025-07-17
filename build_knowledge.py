@@ -4,7 +4,7 @@ import sys
 from typing import List, Dict, Set
 import logging
 from core.utils.logging_utils import setup_logging, setup_llm_logger
-
+from core.utils.token_utils import tokens_to_chars, chars_to_tokens
 
 from datetime import datetime, timezone
 from core.config.config import load_config
@@ -12,7 +12,7 @@ from core.utils.file_utils import get_file_content, is_binary_file, get_file_con
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
-from knowledge.knowledge_store import KnowledgeStore
+from knowledge.knowledge_store import KnowledgeStore, DepUsage
 from knowledge.model import FileDescription, ClassDescription, ClassDescriptionExtended, FileInfo
 from knowledge.embeddings import Embeddings
 from static_analysis.model.model import ClassStructure, ClassStructureDependency
@@ -22,8 +22,7 @@ from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_
 knowledge_store = KnowledgeStore()
 logger = None
 embeddings = None  # Will be initialized after config is loaded
-
-workers_num: int = 1
+config = None
 
 def final_process_file(file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
     """
@@ -169,7 +168,7 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
 
 
 
-def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dependency_files: set,
+def llm_final_process_file(rel_path: str, dependency_files: set,
                                 prompt_params: Dict, prompt_templates: Dict, base_dir: str,
                                 processed_counter: List[int], total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
     """
@@ -192,23 +191,12 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
     add_usages_summaries = True
     add_usages_methods = False
     add_dependency_summaries = True
-    add_dependency_methods = True
-    add_dependency_variables = True
+    add_dependency_methods_and_properties = True
+
 
     # Create filecontext string with class information
-    dependencies: Dict[str, ClassStructure] = {}
-    if file_memory: # Check if file_memory is not None or empty
-        for class_info in file_memory:
-            for dependency in class_info.dependencies:
-                dependency_info = knowledge_store.get_class_structure(dependency.full_classname)
-                if dependency_info is not None:
-                    dependencies[dependency.full_classname] = dependency_info
 
-
-    class DepUsage:
-        dep: ClassStructureDependency
-        reference: ClassStructure
-
+    dependencies: Dict[str, DepUsage] = knowledge_store.get_file_dependencies(rel_path)
 
     # Convert relative path to absolute for file operations
     abs_file_path = os.path.join(base_dir, rel_path) if base_dir else rel_path
@@ -216,151 +204,34 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
     # Get file content
     content = get_file_content_safe(abs_file_path)
 
-    usages: Dict[str, DepUsage] = {}
-    if file_memory: # Check if file_memory is not None or empty
-        for class_info in file_memory:
-            target_classname_to_find_usages_for = class_info.full_classname
-            
-            for potential_user_class_storage in knowledge_store.class_structure_dict.values():
-                # Check if the class represented by potential_user_class_storage uses target_classname_to_find_usages_for
-                for dep in potential_user_class_storage.dependencies:
-                    if dep.full_classname == target_classname_to_find_usages_for:
-                        # The class from potential_user_class_storage uses target_classname_to_find_usages_for.
-                        # Store the summary of the *using* class.
-
-                        dep_usage = DepUsage()
-                        dep_usage.dep = dep
-                        dep_usage.reference = potential_user_class_storage
-                        usages[potential_user_class_storage.full_classname] = dep_usage
-                        # Found usage, no need to check further dependencies of this potential_user_class_storage
-                        # for the current target_classname_to_find_usages_for.
-                        break
+    usages: Dict[str, DepUsage] = knowledge_store.get_file_usages(rel_path)
     
-    filecontext: str = ""
-    for key, dependency in dependencies.items():
-        filecontext += f"\n# Dependency class: {dependency.full_classname}\n"
-        dependency_final_info = knowledge_store.get_class_description(dependency.full_classname)
-        if dependency_final_info:
-            if add_dependency_summaries:
-                filecontext += f"{dependency_final_info.summary}\n"
-            if add_dependency_methods:
-                for method in dependency_final_info.methods:
-                    if method.method_name in content:
-                        filecontext += f"- Method {method.method_name}: {method.method_summary}\n"
-            if add_dependency_variables:
-                for variable in dependency_final_info.variables:
-                    if variable.variable_name in content:
-                        filecontext += f"- Variable {variable.variable_name}: {variable.variable_summary}\n"
-            continue
+    filecontext: str = prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
+                                            add_dependency_summaries, 
+                                            add_dependency_methods_and_properties,
+                                            add_usages_summaries,
+                                            add_usages_methods,
+                                            diff_window=4)
     
+    print(f"Context: {chars_to_tokens(len(filecontext) + len(content))}")
 
-    for key, dep_usage in usages.items():
-        # dep_usage is of type DepUsage
-        # dep_usage.reference is ClassSummaryOutput (contains file path and summary of the class *using* the dependency)
-        # dep_usage.dep is DependencyStruct (contains full_classname of the *used* dependency and usage_lines)
-        using_class_summary = dep_usage.reference
-        used_class_name = dep_usage.dep.full_classname
-        usage_file_rel_path = dep_usage.reference.source_file # Relative path of the file where the usage occurs
-        usage_line_numbers = dep_usage.dep.usage_lines # List of line numbers (1-based) where usage occurs
-
-        # skip quoting if it's the same file.
-        if usage_file_rel_path == rel_path:
-            continue
-
-        filecontext += "\n"
-
-        filecontext += f"# Usage: {using_class_summary.full_classname} is using {used_class_name} in file '{usage_file_rel_path}'\n"
-        final_context = knowledge_store.get_class_description(using_class_summary.full_classname)
-        if final_context:
-            if add_usages_summaries:
-                filecontext += f"{final_context.simple_classname} summary: {final_context.summary}\n"
-            if add_usages_methods:
-                for method in final_context.methods:
-                    if "get" not in method.method_name:
-                        filecontext += f"- Method {method.method_name}: {method.method_summary}\n"
-
-        # Construct absolute path for reading the file where usage occurs
-        # base_dir is a parameter of llm_final_process_file
-        abs_usage_file_path = os.path.join(base_dir, usage_file_rel_path) if base_dir else usage_file_rel_path
-
-        # Get content of the usage file
-        usage_file_content_str = get_file_content_safe(abs_usage_file_path)
-
-        if usage_file_content_str:
-            usage_file_lines_all = usage_file_content_str.splitlines()
-            num_total_lines_in_file = len(usage_file_lines_all)
-
-            if num_total_lines_in_file == 0:
-                # File is empty, so no lines to include.
-                pass
-            else:
-                lines_to_include_flags = [False] * num_total_lines_in_file
-
-                for line_num_1_based in usage_line_numbers:
-                    if line_num_1_based <= 0: # Defensive check for 1-based line numbers
-                        continue
-                    
-                    line_num_0_based = line_num_1_based - 1
-                    
-                    # Ensure the usage line itself is valid before creating a window
-                    if not (0 <= line_num_0_based < num_total_lines_in_file):
-                        # Invalid usage line number provided, skip this one.
-                        # Consider logging this if it's unexpected.
-                        continue
-
-                    # Determine the window of lines to mark for inclusion
-                    # diff_window = 8
-                    diff_window = 4
-                    start_mark_0_based = max(0, line_num_0_based - diff_window)
-                    end_mark_0_based = min(num_total_lines_in_file - 1, line_num_0_based + diff_window)
-                    
-                    for i in range(start_mark_0_based, end_mark_0_based + 1):
-                        lines_to_include_flags[i] = True
-                
-                # Construct the consolidated snippet if any lines were marked
-                if any(lines_to_include_flags):
-                    current_block_idx = 0
-                    while current_block_idx < num_total_lines_in_file:
-                        if lines_to_include_flags[current_block_idx]:
-                            # Start of a new contiguous block of lines to include
-                            block_start_0_based = current_block_idx
-                            
-                            # Find the end of this contiguous block
-                            block_end_0_based = current_block_idx
-                            while (block_end_0_based + 1 < num_total_lines_in_file and
-                                   lines_to_include_flags[block_end_0_based + 1]):
-                                block_end_0_based += 1
-                            
-                            # This block runs from block_start_0_based to block_end_0_based (inclusive)
-                            
-                            # Identify which of the original usage_line_numbers fall into this block
-                            # usage_line_numbers is a list of 1-based integers from dep_usage.dep.usage_lines
-                            original_usages_in_this_block = set()
-                            for original_ul_1_based in usage_line_numbers:
-                                original_ul_0_based = original_ul_1_based - 1
-                                if block_start_0_based <= original_ul_0_based <= block_end_0_based:
-                                    original_usages_in_this_block.add(original_ul_1_based)
-                            
-                            if original_usages_in_this_block:
-                                sorted_usages = sorted(list(original_usages_in_this_block))
-                                filecontext += f"  Context for usage line(s): {', '.join(map(str, sorted_usages))}\n"
-                            
-                            filecontext += "  ```\n"
-                            for line_idx_0_based in range(block_start_0_based, block_end_0_based + 1):
-                                filecontext += f"  {line_idx_0_based + 1:4d} | {usage_file_lines_all[line_idx_0_based]}\n"
-                            filecontext += "  ```\n"
-                            
-                            # Move current_block_idx to the position after this processed block
-                            current_block_idx = block_end_0_based + 1
-                        else:
-                            # This line is not included, move to the next line
-                            current_block_idx += 1
-        else:
-            print(f"  [INFO] Could not read content of '{usage_file_rel_path}' or it is a binary file.\n")
-        filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
+    if chars_to_tokens(len(filecontext) + len(content)) > config.llm.warn_context:
+        logger.info(f"Warn context reached, limiting {rel_path}")
+        filecontext = prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
+                            add_dependency_summaries, 
+                            add_dependency_methods_and_properties = False,
+                            add_usages_summaries = False,
+                            add_usages_methods = False,
+                            diff_window=2
+                        )
+    
+    if chars_to_tokens(len(filecontext) + len(content)) > config.llm.max_context:
+        logger.error(f"Max context reached, skipping {rel_path}")
+        return
+    
 
     # Print dependency files for debugging
-    logger.info(f"Dependency files for {rel_path}: {list(dependency_files)}")
+    logger.info(f"Dependency information for {rel_path}: {filecontext}")
     
     if content is None:
         logger.info(f"  [Binary file, skipping] {rel_path}")
@@ -403,6 +274,132 @@ def llm_final_process_file(rel_path: str, file_memory: List[ClassStructure], dep
     
     # Periodically report progress
     logger.info(f"Progress: {current_processed}/{total_files} files processed")
+
+def prepare_file_context(base_dir, rel_path, 
+                         dependencies: Dict[str, DepUsage], 
+                         usages: Dict[str, DepUsage],
+                         content: str, 
+                         add_dependency_summaries, 
+                         add_dependency_methods_and_properties,
+                         add_usages_summaries,
+                         add_usages_methods,
+                         diff_window
+                         ) -> str:
+    filecontext = " "
+
+    for key, dependency in dependencies.items():
+        if dependency.dependency_description and dependency.dependency_description.file != rel_path:
+            filecontext += f"\n# `{dependency.parent_structure.full_classname}` is using `{dependency.dependency_structure.full_classname}` in lines: [{', '.join(map(str, dependency.dep.usage_lines))}]\n"
+             
+            if add_dependency_summaries:
+                check_in_content = content if add_dependency_methods_and_properties else " "
+                filecontext += f"{dependency.dependency_description.class_summary.describe('- ', check_in_content)}\n"
+            continue
+    
+    for key, dep_usage in usages.items():
+
+        parent_class_structure = dep_usage.parent_structure
+        parent_class_description = dep_usage.parent_description
+
+        dependency_class_name = dep_usage.dependency_structure.full_classname
+
+        parent_file_rel_path = dep_usage.parent_structure.source_file # Relative path of the file where the usage occurs
+        usage_line_numbers = dep_usage.dep.usage_lines # List of line numbers (1-based) where usage occurs
+
+        # skip quoting if it's the same file.
+        if parent_file_rel_path == rel_path:
+            continue
+
+        filecontext += "\n"
+
+        filecontext += f"# `{dependency_class_name}` is used by `{parent_class_structure.full_classname}` in file '{parent_file_rel_path}'\n"
+        if parent_class_description:
+            if add_usages_summaries:
+                filecontext += f"{parent_class_description.class_summary.simple_classname} summary: {parent_class_description.class_summary.summary}\n"
+            if add_usages_methods:
+                for method in parent_class_description.class_summary.methods:
+                    if "get" not in method.method_name: #ignore getters
+                        filecontext += f"- Method {method.method_name}: {method.method_summary}\n"
+
+        # Construct absolute path for reading the file where usage occurs
+        # base_dir is a parameter of llm_final_process_file
+        abs_usage_file_path = os.path.join(base_dir, parent_file_rel_path) if base_dir else parent_file_rel_path
+
+        # Get content of the usage file
+        usage_file_content_str = get_file_content_safe(abs_usage_file_path)
+
+        if usage_file_content_str:
+            usage_file_lines_all = usage_file_content_str.splitlines()
+            num_total_lines_in_file = len(usage_file_lines_all)
+
+            if num_total_lines_in_file == 0:
+                # File is empty, so no lines to include.
+                pass
+            else:
+                lines_to_include_flags = [False] * num_total_lines_in_file
+
+                for line_num_1_based in usage_line_numbers:
+                    if line_num_1_based <= 0: # Defensive check for 1-based line numbers
+                        continue
+                    
+                    line_num_0_based = line_num_1_based - 1
+                    
+                    # Ensure the usage line itself is valid before creating a window
+                    if not (0 <= line_num_0_based < num_total_lines_in_file):
+                        # Invalid usage line number provided, skip this one.
+                        # Consider logging this if it's unexpected.
+                        continue
+
+                    # Determine the window of lines to mark for inclusion
+                    # diff_window = 8
+                    start_mark_0_based = max(0, line_num_0_based - diff_window)
+                    end_mark_0_based = min(num_total_lines_in_file - 1, line_num_0_based + diff_window)
+                    
+                    for i in range(start_mark_0_based, end_mark_0_based + 1):
+                        lines_to_include_flags[i] = True
+                
+                # Construct the consolidated snippet if any lines were marked
+                if any(lines_to_include_flags):
+                    current_block_idx = 0
+                    while current_block_idx < num_total_lines_in_file:
+                        if lines_to_include_flags[current_block_idx]:
+                            # Start of a new contiguous block of lines to include
+                            block_start_0_based = current_block_idx
+                            
+                            # Find the end of this contiguous block
+                            block_end_0_based = current_block_idx
+                            while (block_end_0_based + 1 < num_total_lines_in_file and
+                                   lines_to_include_flags[block_end_0_based + 1]):
+                                block_end_0_based += 1
+                            
+                            # This block runs from block_start_0_based to block_end_0_based (inclusive)
+                            
+                            # Identify which of the original usage_line_numbers fall into this block
+                            # usage_line_numbers is a list of 1-based integers from dep_usage.dep.usage_lines
+                            original_usages_in_this_block = set()
+                            for original_ul_1_based in usage_line_numbers:
+                                original_ul_0_based = original_ul_1_based - 1
+                                if block_start_0_based <= original_ul_0_based <= block_end_0_based:
+                                    original_usages_in_this_block.add(original_ul_1_based)
+                            
+                            if original_usages_in_this_block:
+                                sorted_usages = sorted(list(original_usages_in_this_block))
+                                filecontext += f"  source of `{parent_class_structure.full_classname}` in line(s): {', '.join(map(str, sorted_usages))}\n"
+                            
+                            filecontext += "  ```\n"
+                            for line_idx_0_based in range(block_start_0_based, block_end_0_based + 1):
+                                filecontext += f"  {line_idx_0_based + 1:4d} | {usage_file_lines_all[line_idx_0_based]}\n"
+                            filecontext += "  ```\n"
+                            
+                            # Move current_block_idx to the position after this processed block
+                            current_block_idx = block_end_0_based + 1
+                        else:
+                            # This line is not included, move to the next line
+                            current_block_idx += 1
+        else:
+            print(f"  [INFO] Could not read content of '{parent_file_rel_path}' or it is a binary file.\n")
+        filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
+    return filecontext
 
 def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None, is_filtering_enabled: bool = False) -> List[ClassDescriptionExtended]:
     """
@@ -472,7 +469,6 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
         dependency_files = set(df for df, _ in dependency_files_with_priority_single)
         
         llm_final_process_file(rel_path,
-                               knowledge_store.get_file_structure(rel_path),
                                dependency_files,
                                prompt_params, prompt_templates, base_dir,
                                processed_counter, total_files, all_class_summaries)
@@ -593,6 +589,7 @@ def main():
     input_dir = os.path.abspath(args.input_dir)
     
     # Load configuration
+    global config
     config_file_path = os.path.join(input_dir, ".ai-agent", f"config.json")
     config = load_config(config_file_path)
     

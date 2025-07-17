@@ -24,25 +24,24 @@ def is_binary_file(file_path: str) -> bool:
     except Exception:
         return True
 
-def get_file_content_safe(file_path: str, max_size: int = 230000) -> Optional[str]:
+def get_file_content_safe(file_path: str, max_size: int = 250_000) -> Optional[str]:
     """
     Get the content of a file safely, handling binary files and large files
     """
-    try:
-        # Check if file is binary
-        if is_binary_file(file_path):
-            return None
-            
-        # Check file size
-        file_size = os.path.getsize(file_path)
-        if file_size > max_size:
-            return f"[File too large: {file_size} bytes]"
-            
-        # Read the file content
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            return f.read()
-    except Exception as e:
-        return f"[Error reading file: {str(e)}]"
+    # Check if file is binary
+    if is_binary_file(file_path):
+        raise Exception(f"File is binary {file_path}")
+        return None
+        
+    # Check file size
+    file_size = os.path.getsize(file_path)
+    if file_size > max_size:
+        raise Exception(f"File too large {file_path}")
+        
+    # Read the file content
+    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        return f.read()
+    
 
 def format_file_size(size_in_bytes: int) -> str:
     """

@@ -201,7 +201,7 @@ class KotlinParser(BaseParser):
         Returns:
             List of tuples containing (simple_name, full_name, usage_lines)
         """
-        dependencies = {}
+        dependencies: Dict[str, Dict[str, any]] = {}
         
         # Parse the file content
         tree = self._parse_with_tree_sitter(file_content)
@@ -223,17 +223,13 @@ class KotlinParser(BaseParser):
         
         # Track dependencies by walking the class AST recursive, keeping the scope
         # Build symbol table for scope
-        parent_symbol_table = {}
-        self._look_for_dependencies_scope_recursive(class_node, file_content, package_name, known_classes, imports, dependencies, parent_symbol_table)
-        
-        # Remove self-references
-        if class_structure.full_classname in dependencies:
-            del dependencies[class_structure.full_classname]
+        self._look_for_dependencies_scope_recursive(class_node, file_content, package_name, known_classes, imports, dependencies, {})
         
         # Convert to list format
         result = []
         for dep_name, dep_info in dependencies.items():
-            result.append((dep_info['full_name'], sorted(list(dep_info['lines']))))
+            if class_structure.full_classname != dep_name: # Remove self-references
+                result.append((dep_info['full_name'], sorted(list(dep_info['lines']))))
         
         return result
     
@@ -557,24 +553,43 @@ class KotlinParser(BaseParser):
             if var_decl:
                 var_id = self._find_direct_child_by_type(var_decl, 'identifier')
                 if var_id:
-                    var_name = self._get_node_text(var_id, file_content)
+                    var_name = self._get_node_text(var_id)
                     # Look for initializer
+                    type_fullname = None
+                    user_type = self._find_node_by_type(var_decl, 'user_type')
+                    if user_type and user_type.children and user_type.children[0].type in ['simple_identifier', 'identifier']:
+                        type_name = self._get_node_text(user_type.children[0])
+                        type_fullname = imports.get(type_name, f"{package}.{type_name}")
+                        type_node = user_type.children[0]
+                    
+                    delegate = self._find_node_by_type(node, 'property_delegate')
+                    if delegate:
+                        type_nodes = self._find_nodes_by_type(delegate, 'identifier')
+                        for p_type_node in type_nodes:
+                            potential_type_name = self._get_node_text(p_type_node)
+                            potential_type_fullname = imports.get(potential_type_name, f"{package}.{potential_type_name}")
+                            if potential_type_fullname in known_classes:
+                                type_node = p_type_node
+                                type_fullname = potential_type_fullname
+
                     for child in node.children:
                         if child.type == 'call_expression':
                             # Constructor call in initializer
                             if child.children and child.children[0].type in ['simple_identifier', 'identifier']:
                                 type_name = self._get_node_text(child.children[0], file_content)
-                                if type_name in known_classes:
-                                    line_number = child.start_point[0] + 1
-                                    if type_name not in dependencies_output:
-                                        full_name = imports.get(type_name, type_name)
-                                        dependencies_output[full_name] = {
-                                            'full_name': full_name,
-                                            'lines': set()
-                                        }
-                                    dependencies_output[full_name]['lines'].add(line_number)
-                                    # Update symbol table dynamically
-                                    parent_symbol_table[var_name] = type_name
+                                type_fullname = imports.get(type_name, f"{package}.{type_name}")
+                                type_node = child.children[0]
+
+                    if type_fullname and type_fullname in known_classes:
+                        line_number = type_node.start_point[0] + 1
+                        if type_fullname not in dependencies_output:
+                            dependencies_output[type_fullname] = {
+                                'full_name': type_fullname,
+                                'lines': set()
+                            }
+                        dependencies_output[type_fullname]['lines'].add(line_number)
+                        # Update symbol table dynamically
+                        parent_symbol_table[var_name] = type_fullname
         
         # Recurse into children, including companion objects
         for child in node.children:
