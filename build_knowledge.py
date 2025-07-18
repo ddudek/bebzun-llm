@@ -59,7 +59,9 @@ def final_process_file(file_path: str, content: str, filecontext: str, prompt_pa
     You are helpful kotlin and java expert that outputs JSON response, analysing and summarizing files of the android software sorce code. Your output will help understand how the whole project works. Generated JSON need to strictly follow the provided JSON Schema.
     """
 
-        response = llm_execution.llm_invoke(system_prompt, prompt=prompt, schema=FileDescription.model_json_schema())
+        schema = FileDescription.model_json_schema()
+        logger.info(f"Processing with LLM ~{chars_to_tokens(len(prompt) + len(system_prompt) + len(schema))} tk...")
+        response = llm_execution.llm_invoke(system_prompt, prompt=prompt, schema=schema)
         return FileDescription(**response)
     except Exception as e:
         error_msg = f"Error generating summary: {str(e)}"
@@ -170,7 +172,7 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
 
 def llm_final_process_file(rel_path: str, dependency_files: set,
                                 prompt_params: Dict, prompt_templates: Dict, base_dir: str,
-                                processed_counter: List[int], total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
+                                processed_counter: int, total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
     """
     Process a file for final LLM processing and update shared data
     
@@ -212,8 +214,6 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
                                             add_usages_summaries,
                                             add_usages_methods,
                                             diff_window=4)
-    
-    print(f"Context: {chars_to_tokens(len(filecontext) + len(content))}")
 
     if chars_to_tokens(len(filecontext) + len(content)) > config.llm.warn_context:
         logger.info(f"Warn context reached, limiting {rel_path}")
@@ -229,29 +229,38 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
         logger.error(f"Max context reached, skipping {rel_path}")
         return
     
-
-    # Print dependency files for debugging
-    logger.info(f"Dependency information for {rel_path}: {filecontext}")
-    
     if content is None:
         logger.info(f"  [Binary file, skipping] {rel_path}")
         return
     
+    # Print dependency files for debugging
+    logger.info(f"""## Project context:
+{prompt_params['projectcontext']}
+
+## File name:
+{rel_path}
+
+## Dependencies and usages context:
+{filecontext}
+
+## File content
+{content}
+--- End of file ---""")
+    
     # Generate summary
-    logger.info(f"Processing with llm...")
+
+    logger.info(f"[{processed_counter}/{total_files}] File: {rel_path}")
     summary = final_process_file(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
     
     # Process results
     # Update processed counter
-    processed_counter[0] += 1
-    current_processed = processed_counter[0]
-    
 
-    logg_info = f"Done: [{current_processed}/{total_files}] {rel_path}\nClasses found:\n"
+    logg_info = f"Done: [{processed_counter + 1}/{total_files}] {rel_path}\nClasses found:\n"
     for classs in summary.classes:
         logg_info += f"- Class: {classs.full_classname}\n"
         logg_info += f"  Summary: {classs.summary}\n"
         logg_info += f"  Category: {classs.category}\n"
+    logg_info += f"========================================"
     
     # Print progress
     logger.info(logg_info)
@@ -273,7 +282,7 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
     knowledge_store.dump_write_storage_final(f"{base_dir}/.ai-agent/db_final.json")
     
     # Periodically report progress
-    logger.info(f"Progress: {current_processed}/{total_files} files processed")
+    logger.info(f"Progress: {processed_counter}/{total_files} files processed")
 
 def prepare_file_context(base_dir, rel_path, 
                          dependencies: Dict[str, DepUsage], 
@@ -401,7 +410,7 @@ def prepare_file_context(base_dir, rel_path,
         filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
     return filecontext
 
-def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None, is_filtering_enabled: bool = False) -> List[ClassDescriptionExtended]:
+def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None, is_filtering_enabled: bool = False, is_force = True) -> List[ClassDescriptionExtended]:
     """
     Process a list of files and generate final summaries with context from storage
     Returns a list of ClassFinalSummaryStorage objects to be saved in storage
@@ -429,18 +438,12 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
     files_to_process_pre = [(file, priority) for file, priority in dependency_files_with_priority.items()]
     files_to_process_pre.sort(key=lambda x: x[1], reverse=True)
     
-    total_files = len(files_to_process_pre)
-    logger.info(f"Processing {total_files} files for final summary (including dependencies)")
-    logger.info("Generating summaries with context...")
-    
     # List to collect all class summaries
     all_class_summaries = []
-    files_to_process = []
+    files_to_process: List[FileInfo] = []
 
-    for file in files_to_process_pre:
-        logger.info(file)
-
-    only_missing = True
+    only_missing = not is_force
+    log_message_files = ""
     for file in files_to_process_pre:
         file_path = file[0]
         file_priority = file[1]
@@ -449,21 +452,30 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
         already_processed = knowledge_store.get_file_description(file_path)
 
         if is_filtering_enabled:
-            if file_info.is_allowed_by_filter or not already_processed:
-                files_to_process.append((file_info, file_priority))
+            if only_missing:
+                if not already_processed and file_info.is_allowed_by_filter:
+                    files_to_process.append(file_info)
+                    log_message_files += f"\n- {file_path}, Priority: {file_priority}"
+                    
+            else:
+                if file_info.is_allowed_by_filter:
+                    files_to_process.append(file_info)
+                    log_message_files += f"\n- {file_path}, Priority: {file_priority}"
 
         elif not already_processed or not only_missing:
-            files_to_process.append((file_info, file_priority))
-    
-    processed_counter = [0]
-    processed_files = set()
+            files_to_process.append(file_info)
+            log_message_files += f"\n- {file_path}, Priority: {file_priority}"
 
-    for i, (file_info, priority) in enumerate(files_to_process):
+    logger.info(f"Files after limiting:\n {log_message_files}")
+    
+    processed_counter = 0
+
+    total_files = len(files_to_process)
+    logger.info(f"Processing {total_files} files for final summary (including dependencies)")
+    logger.info("Generating summaries with context...")
+
+    for i, file_info in enumerate(files_to_process):
         rel_path = file_info.filepath
-        if rel_path in processed_files:
-            continue
-        
-        processed_files.add(rel_path)
         
         dependency_files_with_priority_single = get_dependency_files(rel_path, {})
         dependency_files = set(df for df, _ in dependency_files_with_priority_single)
@@ -472,6 +484,8 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
                                dependency_files,
                                prompt_params, prompt_templates, base_dir,
                                processed_counter, total_files, all_class_summaries)
+        
+        processed_counter += 1
 
     logger.info(f"All files processed in dependency order")
     
@@ -575,9 +589,14 @@ def main():
     parser.add_argument('-m', '--mode', choices=['Pre', 'Final', 'Embedd'],
                         help='Processing mode: Pre (TreeSitter preprocessing), Final (final process only), Embedd (embeddings only)')
     
-    parser.add_argument('-filter', help='Filter files by name (only process files containing this string in filename). '
+    parser.add_argument('-f', '--filter', help='Filter files by name (only process files containing this string in filename). '
                                         'Prefix with "!" to invert (exclude files containing the string)')
+    
+    parser.add_argument('-fo', '--force', action='store_true', help='Process even if already processed')
+    
     args = parser.parse_args()
+
+
     
     # Initialize logging
     global logger
@@ -628,7 +647,7 @@ def main():
         logger.info(f"{i}. {file_info.filepath} ({formatted_size}) {status}")
     
     allowed_count = sum(1 for f in filtered_file_infos if f.is_allowed_by_filter)
-    logger.info(f"Total: {len(filtered_file_infos)} files found, {allowed_count} will be processed")
+    logger.info(f"Total: {len(filtered_file_infos)} files found, {allowed_count} match filter")
 
     # Load prompt templates for final processing
     final_prompt_path = os.path.join(script_dir, 'knowledge', 'prompts', 'final_proccess_prompt.txt')
@@ -673,8 +692,9 @@ def main():
         logger.info("=== Running Final processing ===")
         knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
         
+        is_force = args.force 
         # Process with memory and get all class summaries
-        class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir, is_filtering_enabled=is_filtering_enabled)
+        class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir, is_filtering_enabled=is_filtering_enabled, is_force=is_force)
         
         # Save all class summaries to storage at once
         logger.info(f"Saving {len(class_summaries_final)} class summaries with memory to storage...")

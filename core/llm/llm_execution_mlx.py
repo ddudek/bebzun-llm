@@ -54,7 +54,7 @@ class MlxLlmExecution:
             self.mlx_tokenizer,
             prompt=mlx_prompt, 
             verbose=verbose,
-            max_tokens=8192,
+            max_tokens=16384,
             sampler=self.mlx_sampler
         )
 
@@ -96,7 +96,7 @@ class MlxLlmExecution:
                 self.mlx_tokenizer,
                 prompt=mlx_prompt,
                 verbose=verbose,
-                max_tokens=8192,  # Or some other reasonable value
+                max_tokens=16384,  # Or some other reasonable value
                 sampler=sampler,
             )
         
