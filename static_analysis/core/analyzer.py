@@ -8,6 +8,8 @@ codebases, including orchestration of parsing, dependency analysis, and output g
 import time
 import json
 from pathlib import Path
+import os
+from datetime import datetime
 from typing import Dict, List, Set
 
 from static_analysis.core.file_utils import get_all_source_files, get_java_files, get_kotlin_files
@@ -114,12 +116,14 @@ class CodebaseAnalyzer:
         
         # Process Java files
         for file_path in java_files:
-            classes = self.java_parser.extract_classes(file_path, input_dir)
+            md_timestamp = int(os.path.getmtime(file_path))
+            classes = self.java_parser.extract_classes(file_path, input_dir, md_timestamp)
             all_classes.extend(classes)
         
         # Process Kotlin files
         for file_path in kotlin_files:
-            classes = self.kotlin_parser.extract_classes(file_path, input_dir)
+            md_timestamp = int(os.path.getmtime(file_path))
+            classes = self.kotlin_parser.extract_classes(file_path, input_dir, md_timestamp)
             all_classes.extend(classes)
         
         return all_classes

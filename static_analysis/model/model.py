@@ -28,6 +28,7 @@ class ClassStructure(BaseModel):
     dependencies: List[ClassStructureDependency] = Field(default_factory=list)
     public_methods: List[ClassStructureMethod] = Field(default_factory=list)
     source_file: str = Field(description="Path to the source file containing this class")
+    timestamp: int = Field(description="Modification timestamp of the file when the analysis was performed", default=0)
 
 class FileStructure(BaseModel):
     """Container for the entire analysis output"""

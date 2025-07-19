@@ -265,13 +265,15 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
     # Print progress
     logger.info(logg_info)
     
+    md_timestamp = int(os.path.getmtime(abs_file_path))
     # Process and save results
     for classs in summary.classes:
         
         # Create ClassFinalSummaryStorage object
         storage_obj = ClassDescriptionExtended(
             class_summary=classs,
-            file=rel_path
+            file=rel_path,
+            timestamp=md_timestamp
         )
         
         # Add to collection
@@ -410,7 +412,15 @@ def prepare_file_context(base_dir, rel_path,
         filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
     return filecontext
 
-def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templates: Dict, base_dir: str = None, is_filtering_enabled: bool = False, is_force = True) -> List[ClassDescriptionExtended]:
+def final_process(
+        file_infos: List[FileInfo], 
+        prompt_params: Dict, 
+        prompt_templates: Dict, 
+        base_dir: str = None,
+        is_filtering_enabled: bool = False, 
+        is_force = True,
+        is_update_only = False
+        ) -> List[ClassDescriptionExtended]:
     """
     Process a list of files and generate final summaries with context from storage
     Returns a list of ClassFinalSummaryStorage objects to be saved in storage
@@ -449,22 +459,40 @@ def final_process(file_infos: List[FileInfo], prompt_params: Dict, prompt_templa
         file_priority = file[1]
         file_info = file_info_map[file_path]
 
-        already_processed = knowledge_store.get_file_description(file_path)
+        old_classes = knowledge_store.get_file_description(file_path)
 
+        file_to_process = None
         if is_filtering_enabled:
             if only_missing:
-                if not already_processed and file_info.is_allowed_by_filter:
-                    files_to_process.append(file_info)
-                    log_message_files += f"\n- {file_path}, Priority: {file_priority}"
+                if not old_classes and file_info.is_allowed_by_filter:
+                    file_to_process = file_info
                     
             else:
                 if file_info.is_allowed_by_filter:
-                    files_to_process.append(file_info)
-                    log_message_files += f"\n- {file_path}, Priority: {file_priority}"
+                    file_to_process = file_info
 
-        elif not already_processed or not only_missing:
-            files_to_process.append(file_info)
+        elif not old_classes or not only_missing:
+            file_to_process = file_info
+
+        # Check update only (only files that were modified)
+        if is_update_only and file_to_process:
+            allowed = False
+            classes_in_file = knowledge_store.get_file_structure(rel_path)
+            if not classes_in_file or not old_classes:
+                allowed = True
+
+            for cl in classes_in_file:
+                old_description = knowledge_store.get_class_description_extended(cl.full_classname)
+                if old_description and old_description.timestamp != cl.timestamp:
+                    allowed = True
+
+            if not allowed:
+                file_to_process = None
+
+        if file_to_process:
+            files_to_process.append(file_to_process)
             log_message_files += f"\n- {file_path}, Priority: {file_priority}"
+            
 
     logger.info(f"Files after limiting:\n {log_message_files}")
     
@@ -593,11 +621,10 @@ def main():
                                         'Prefix with "!" to invert (exclude files containing the string)')
     
     parser.add_argument('-fo', '--force', action='store_true', help='Process even if already processed')
+    parser.add_argument('--update', action='store_true', help='Process even if already processed')
     
     args = parser.parse_args()
 
-
-    
     # Initialize logging
     global logger
     global llm_logger
@@ -691,10 +718,19 @@ def main():
     if run_final_process:
         logger.info("=== Running Final processing ===")
         knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
-        
+
         is_force = args.force 
+        is_update_only = args.update
+
         # Process with memory and get all class summaries
-        class_summaries_final = final_process(filtered_file_infos, prompt_params, prompt_templates, base_dir=input_dir, is_filtering_enabled=is_filtering_enabled, is_force=is_force)
+        class_summaries_final = final_process(
+            filtered_file_infos, 
+            prompt_params, 
+            prompt_templates, 
+            base_dir=input_dir, 
+            is_filtering_enabled=is_filtering_enabled, 
+            is_force=is_force, 
+            is_update_only=is_update_only)
         
         # Save all class summaries to storage at once
         logger.info(f"Saving {len(class_summaries_final)} class summaries with memory to storage...")

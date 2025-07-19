@@ -56,6 +56,7 @@ class ClassDescriptionExtended(BaseModel):
     
     class_summary: ClassDescription = Field(description="The class summary output")
     file: str = Field(description="Relative path of the source file")
+    timestamp: int = Field(description="Modification timestamp of the file when the analysis was performed", default=0)
 
 
 class FileDescription(BaseModel):
