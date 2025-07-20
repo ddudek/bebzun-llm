@@ -24,7 +24,7 @@ class GetFileContentTool:
         self.base_path = base_path
         self.source_dirs = [os.path.normpath(d) for d in source_dirs]
     
-    def run(self, chat_state: ChatState, path: str = "") -> str:
+    def run(self, chat_state: ChatState, path: str = "", **kwargs) -> str:
         """
         Get the content of a specific file in the specified directory.
         Provide a relative path to the file.

@@ -172,7 +172,7 @@ def main():
 
     search_tool_name = "search_knowledge_tool"
     if embeddings_instance and embeddings_instance.is_loaded():
-        search_knowledge_tool = SearchKnowledgeTool(embeddings=embeddings_instance, knowledge_store=knowledge, logger=logger)
+        search_knowledge_tool = SearchKnowledgeTool(embeddings=embeddings_instance, knowledge_store=knowledge, logger=logger, config=config)
         search_tool_name = search_knowledge_tool.name
         step1_tools.append(search_knowledge_tool)
         step2_tools.append(search_knowledge_tool)
@@ -275,6 +275,7 @@ def main():
                     param_pattern = r"<(\w+)>(.*?)</\1>"
                     param_matches = re.findall(param_pattern, tool_content, re.DOTALL)
                     tool_kwargs = {key.strip(): value.strip() for key, value in param_matches}
+                    tool_kwargs['original_query'] = user_initial_input
                     
                     tool_output = tool_found.run(chat_state, **tool_kwargs)
                     print(f"\nAgent:\n{tool_output}")

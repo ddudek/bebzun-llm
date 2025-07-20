@@ -6,20 +6,11 @@ import ollama
 import logging
 import mlx.core as mx
 
-from dataclasses import dataclass, asdict
 from core.config.config import Config, EmbeddingsConfig
 from mlx_embeddings.utils import load
 from mlx_embeddings.tokenizer_utils import TokenizerWrapper
-
-@dataclass
-class EmbeddingEntry:
-    full_classname: str
-    rel_path: str
-    embedding: List[float]
-    last_modified_at: str
-
-    def to_dict(self) -> Dict:
-        return asdict(self)
+from core.search.search_result import SearchResult
+from core.search.embedding_entry import EmbeddingEntry
 
 class Embeddings:
     def __init__(self, config: Config, logger: logging.Logger):
@@ -127,7 +118,7 @@ class Embeddings:
             data_to_store = {k: v.to_dict() for k, v in self.data.items()}
             json.dump(data_to_store, f, indent=2)
 
-    def store_class_description_embeddings(self, classname: str, summary: str, filecontext: str, rel_path: str, timestamp: str):
+    def store_class_description_embeddings(self, type: str, classname: str, detail: str, summary: str, filecontext: str, rel_path: str, timestamp: int):
         """
         Store embeddings in the JSON file
         
@@ -151,18 +142,21 @@ class Embeddings:
                 return
             
             entry = EmbeddingEntry(
+                type=type,
+                detail=detail,
                 full_classname=classname,
                 rel_path=rel_path,
                 embedding=embedding_vector,
-                last_modified_at=timestamp
+                timestamp=timestamp
             )
-            self.data[classname] = entry
+            key = f"{classname}.{detail}" if type != 'class' else classname
+            self.data[key] = entry
             
             # self.logger.info(f"Successfully stored embeddings for {classname} in {self.storage_path}")
         except Exception as e:
             self.logger.error(f"Error storing embeddings for {classname}: {str(e)}")
 
-    def search_similar(self, query: str, limit: int = 5) -> List[Dict]:
+    def search_similar(self, query: str, limit: int = 5) -> List[SearchResult]:
         """
         Search for similar documents in the vector store
         
@@ -209,10 +203,8 @@ class Embeddings:
             for i in range(min(limit, len(sorted_indices))):
                 idx = sorted_indices[i].item()
                 entry = stored_entries[idx]
-                results.append({
-                    "item": entry,
-                    "score": float(similarities[idx].item())
-                })
+                score = float(similarities[idx].item())
+                results.append(SearchResult(entry, vector_score=score, details=[]))
             
             return results
 

@@ -8,7 +8,9 @@ from typing import List, Dict
 
 from core.config.config import load_config
 from knowledge.knowledge_store import KnowledgeStore
-from knowledge.embeddings import Embeddings, EmbeddingEntry
+from knowledge.embeddings import Embeddings
+from knowledge.model import MethodDescription, VariableDescription
+from core.search.embedding_entry import EmbeddingEntry
 from core.search.search import KnowledgeSearch
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
@@ -27,16 +29,20 @@ def similarity_search(args, config):
     Performs vector similarity search using the knowledge base.
     """
     global embeddings, knowledge_store
-    search = KnowledgeSearch(embeddings, knowledge_store)
-    results = search.vector_search(args.query, limit=args.limit)
+    search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
+    results = search.vector_search_combined(args.query, limit=args.limit)
+    results = search.rerank_results(results, args.query)
     
     output_results = []
     for res in results:
-        item: EmbeddingEntry = res['item']
+        item: EmbeddingEntry = res.entry
+        content = res.describe_content()        
         output_results.append({
             'full_classname': item.full_classname,
+            'content': content,
             'file_path': item.rel_path,
-            'score': res['score']
+            'score': res.vector_score,
+            'rerank_score': res.rerank_score
         })
     
     logger.info(json.dumps(output_results, indent=2))
@@ -46,16 +52,20 @@ def bm25_search(args, config):
     Performs BM25 search using the knowledge base.
     """
     global embeddings, knowledge_store
-    search = KnowledgeSearch(embeddings, knowledge_store)
+    search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
     results = search.bm25_search(args.query, limit=args.limit)
+    results = search.rerank_results(results, args.query)
     
     output_results = []
     for res in results:
-        item: EmbeddingEntry = res['item']
+        item: EmbeddingEntry = res.entry
+        content = res.describe_content() 
         output_results.append({
             'full_classname': item.full_classname,
+            'content': content,
             'file_path': item.rel_path,
-            'score': res['score']
+            'score': res.vector_score,
+            'rerank_score': res.rerank_score
         })
         
     logger.info(json.dumps(output_results, indent=2))
@@ -141,13 +151,13 @@ def main():
     # Similarity search command
     search_parser = subparsers.add_parser('similarity_search', help='Perform similarity search using vector embeddings.')
     search_parser.add_argument('query', help='The search query.')
-    search_parser.add_argument('--limit', type=int, default=5, help='Number of results to return.')
+    search_parser.add_argument('--limit', type=int, default=15, help='Number of results to return.')
     search_parser.set_defaults(func=similarity_search)
 
     # BM25 search command
     bm25_parser = subparsers.add_parser('bm25_search', help='Perform keyword-based BM25 search.')
     bm25_parser.add_argument('query', help='The search query.')
-    bm25_parser.add_argument('--limit', type=int, default=5, help='Number of results to return.')
+    bm25_parser.add_argument('--limit', type=int, default=15, help='Number of results to return.')
     bm25_parser.set_defaults(func=bm25_search)
 
     # Summarize project command

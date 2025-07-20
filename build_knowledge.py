@@ -547,13 +547,13 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
         # Get dependencies directly from class_storage.class_summary.dependencies
         # filecontext: str = f"{project_context}\n" if project_context else ""
         filecontext: str = ""
-        dependencies: Dict[str, ClassStructure] = {}
-        
+
         # Get dependencies from the class summary
         class_summary = class_storage.class_summary
         class_preprocess = knowledge_store.get_class_structure(class_summary.full_classname)
-        logger.info(f"  Getting dependencies for class: {class_summary.full_classname}")
-        
+
+        only_class = False
+
         if class_summary.features:
             filecontext += "Used in features:\n"
             for feature in class_summary.features:
@@ -564,38 +564,38 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
             for question in class_summary.questions:
                 filecontext += f"{question}\n"
         
-        # Get file's last modification time from the FileInfo object if available
-        timestamp = None
-        # Try to find the matching FileInfo object for this file
-        matching_file_info = next((fi for fi in file_infos if fi.filepath == rel_path), None)
-        
-        if matching_file_info:
-            # Use the timestamp from the FileInfo object
-            timestamp = matching_file_info.modified_timestamp.isoformat()
-        else:
-            # Fall back to checking the file system if no matching FileInfo is found
-            abs_file_path = os.path.join(base_dir, rel_path) if base_dir else rel_path
-            if os.path.exists(abs_file_path):
-                mtime = os.path.getmtime(abs_file_path)
-                timestamp = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-            else:
-                # Use current time if file doesn't exist
-                timestamp = datetime.now(timezone.utc).isoformat()
-        
         # Generate embeddings and store with embeddings.store_embeddings
         logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
         embedd_summary = f"{class_summary.summary}"
-        if class_summary.methods:
-            embedd_summary += "\nMethods:"
+        
+        embeddings.store_class_description_embeddings('class', class_summary.full_classname, '', embedd_summary, filecontext, rel_path, class_storage.timestamp)
+
+        if not only_class:
             for method in class_summary.methods:
-                embedd_summary+=(f"\n Method `{method.method_name}`: {method.method_summary}")
+                filecontext: str = ""
+                if class_summary.features:
+                    filecontext += "Used in features:\n"
+                    for feature in class_summary.features:
+                        filecontext += f"{feature}\n"
 
-        if class_summary.variables:
-            embedd_summary += "\nProperties:"
-            for variable_entry in class_summary.variables:
-                embedd_summary+=(f"\n Property `{variable_entry.variable_name}`: {variable_entry.variable_summary}")
+                # Generate embeddings and store with embeddings.store_embeddings
+                logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
+                embedd_summary = f"Method {method.method_name}: {method.method_summary}"
+                
+                embeddings.store_class_description_embeddings('method', class_summary.full_classname, method.method_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
 
-        embeddings.store_class_description_embeddings(class_summary.full_classname, embedd_summary, filecontext, rel_path, timestamp)
+            for property in class_summary.properties:
+                filecontext: str = ""
+                if class_summary.features:
+                    filecontext += "Used in features:\n"
+                    for feature in class_summary.features:
+                        filecontext += f"{feature}\n"
+
+                # Generate embeddings and store with embeddings.store_embeddings
+                logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
+                embedd_summary = f"Property {property.property_name}: {property.property_summary}"
+                
+                embeddings.store_class_description_embeddings('property', class_summary.full_classname, property.property_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
         
         # Print progress
         if processed % 10 == 0:

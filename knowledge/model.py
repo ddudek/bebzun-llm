@@ -12,8 +12,8 @@ class MethodDescription(BaseModel):
                 prop.pop('title', None)
 
 class VariableDescription(BaseModel):
-    variable_name: str = Field(description="Name of the variable")
-    variable_summary: str = Field(description="Explanation of what this variable is and how it behaves. If the variable is modified inside the class, please provide at least 2 sentences how it's being changed.")
+    property_name: str = Field(description="Name of the variable")
+    property_summary: str = Field(description="Explanation of what this variable is and how it behaves. If the variable is modified inside the class, please provide at least 2 sentences how it's being changed.")
     class Config:
         @staticmethod
         def json_schema_extra(schema: dict[str, any], model: type['VariableDescription']) -> None:
@@ -27,10 +27,10 @@ class ClassDescription(BaseModel):
     full_classname: str = Field(description="Full class name including package (important!)")
     summary: str = Field(description="An explanation of what this class does or contains. Begin with simple class name(!), then continue with explanation. The purpose of this summary will be to explain the class as a context to understand how the project works. Please explain how this class behaves, which and how other classes use it. For Enums and sealed data classes like UI states please explain what particular state causes. Include details that are not related to the filename.")
     category: Literal['UI', 'Logic', 'Data', 'Testing', 'Other'] = Field(description="Category of this class. UI: presentation layer of the app. Logic: classes containg important logic implemented. Data: External layer of the app, using database, 3rd party library wrappers, platform APIs. Testing: Test helpers and test classes. Other: Other usages.")
-    questions: List[str] = Field(description="3 general questions about the project that this class would be a part of explanation. Avoid mentioning this class explicitly, focus on what is it used for, or which bigger feature uses it.", default=[])
-    features: List[str] = Field(description="List of at least 3 features that this class relates to", default=[])
-    methods: List[MethodDescription] = Field(description="List of public methods")
-    variables: List[VariableDescription] = Field(description="List of public variables")
+    questions: List[str] = Field(description="3 general questions about the project that this code would be a part of explanation. Avoid mentioning this class explicitly, focus on what is it used for, or which bigger feature uses it.", default=[])
+    features: List[str] = Field(description="List of at least 3 features that this code relates to", default=[])
+    methods: List[MethodDescription] = Field(description="List of all public methods")
+    properties: List[VariableDescription] = Field(description="List of all public variables and properties")
     class Config:
         @staticmethod
         def json_schema_extra(schema: dict[str, any], model: type['ClassDescription']) -> None:
@@ -45,11 +45,21 @@ class ClassDescription(BaseModel):
                 if not check_in_content or (check_in_content and method.method_name in check_in_content):
                     summary+=(f"\n{bullet}Method `{method.method_name}`: {method.method_summary}")
 
-        if self.variables:
-            for variable_entry in self.variables:
-                if not check_in_content or (check_in_content and variable_entry.variable_name in check_in_content):
-                    summary+=(f"\n{bullet}Property `{variable_entry.variable_name}`: {variable_entry.variable_summary}")
+        if self.properties:
+            for property_entry in self.properties:
+                if not check_in_content or (check_in_content and property_entry.property_name in check_in_content):
+                    summary+=(f"\n{bullet}Property `{property_entry.property_name}`: {property_entry.property_summary}")
         return summary
+    
+    def find_method(self, name: str) -> Optional[MethodDescription]:
+        for item in self.methods:
+            if item.method_name == name:
+                return item
+    
+    def find_property(self, name: str) -> Optional[VariableDescription]:
+        for item in self.properties:
+            if item.property_name == name:
+                return item
 
 class ClassDescriptionExtended(BaseModel):
     """Storage model for ClassFinalSummaryOutput with file path"""

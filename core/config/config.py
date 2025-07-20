@@ -29,8 +29,12 @@ class LlmConfig(BaseModel):
     max_context: int = Field(default=128000)
     warn_context: int = Field(default=75000)
 
+class RerankerConfig(BaseModel):
+    model: Literal["none", "experimental-transfrormers-qwen3"] = "none"
+
 class Config(BaseModel):
     source_dirs: List[str]
+    reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     llm: LlmConfig
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
 

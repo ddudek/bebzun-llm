@@ -6,3 +6,4 @@ tree-sitter-java
 rank_bm25
 mlx-embeddings
 mlx-lm
+anthropic

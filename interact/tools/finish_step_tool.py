@@ -9,7 +9,7 @@ class FinishStepTool:
         "- step_number (required): The number of the step to finish.\n"
         "Example: `<finish_step><step_number>1</step_number></finish_step>`")
 
-    def run(self, chat_state: ChatState, step_number: str) -> str:
+    def run(self, chat_state: ChatState, step_number: str, **kwargs) -> str:
         """
         This tool doesn't perform an action in the traditional sense but signals
         a state change in the chat loop. The return value can be used for logging.

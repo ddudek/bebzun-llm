@@ -11,7 +11,7 @@ class FinalAnswerTool:
         "Example: `<final_answer><answer>The final answer is...</answer></final_answer>`"
     )
 
-    def run(self, chat_state: ChatState, answer: str) -> str:
+    def run(self, chat_state: ChatState, answer: str, **kwargs) -> str:
         """
         Returns the final answer.
         """
