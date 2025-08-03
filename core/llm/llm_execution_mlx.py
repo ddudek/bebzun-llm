@@ -1,11 +1,13 @@
 import json
 import logging
 import functools
-from typing import Dict, List
-from mlx_lm import load, stream_generate, generate
-from mlx_lm.models.cache import load_prompt_cache, make_prompt_cache, save_prompt_cache
+from typing import Dict, List, Optional
+import mlx.core as mx
+from mlx_lm import stream_generate, generate
+from mlx_lm.models.cache import make_prompt_cache, save_prompt_cache
 from mlx_lm.sample_utils import make_sampler
 from core.utils.token_utils import tokens_to_chars, chars_to_tokens
+from mlx_lm import load
 
 class MlxLlmExecution:
     def __init__(self, model: str, temperature: float, logger: logging.Logger):
@@ -22,15 +24,14 @@ class MlxLlmExecution:
         self.logger.info(f"Loading LLM model: {self.model}...\n")
         self.mlx_model, self.mlx_tokenizer = load(self.model)
 
-    def llm_invoke(self, mlx_prompt_system_bare, prompt, schema):
-
+    def llm_invoke(self, system_prompt, prompt, schema):
         mlx_user_prompt_bare = f"""Respond in JSON format. Only output valid JSON, do not include any explanations or markdown formatting. Ensure all required fields are included.
     JSON schema: {schema}
 
     {prompt}"""
         
         messages = [
-            {"role": "system", "content": mlx_prompt_system_bare},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": mlx_user_prompt_bare}
         ]
     

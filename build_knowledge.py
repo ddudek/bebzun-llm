@@ -12,11 +12,12 @@ from core.utils.file_utils import get_file_content, is_binary_file, get_file_con
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
+from core.llm.llm_execution_openai import OpenAILlmExecution
 from knowledge.knowledge_store import KnowledgeStore, DepUsage
 from knowledge.model import FileDescription, ClassDescription, ClassDescriptionExtended, FileInfo
-from knowledge.embeddings import Embeddings
+from knowledge.embeddings_store import Embeddings
 from static_analysis.model.model import ClassStructure, ClassStructureDependency
-from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_descriptions, params_add_ignored_packaged, params_add_project_context
+from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_descriptions, params_add_ignored_packaged, params_add_project_context, params_add_containing_classes
 
 # Initialize Storage as a global instance
 knowledge_store = KnowledgeStore()
@@ -51,6 +52,7 @@ def final_process_file(file_path: str, content: str, filecontext: str, prompt_pa
                 content = "File content:\n```\n" + content + "```\n",
                 list_of_files = list_of_files_txt,
                 ignore_packages = prompt_params["ignore_packages"],
+                contain_classes = prompt_params["contain_classes"],
                 projectcontext = prompt_params["projectcontext"],
                 filecontext = "" + filecontext + "" if filecontext is not None else ""
             )
@@ -208,7 +210,7 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
 
     usages: Dict[str, DepUsage] = knowledge_store.get_file_usages(rel_path)
     
-    filecontext: str = prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
+    filecontext: str = knowledge_store.prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
                                             add_dependency_summaries, 
                                             add_dependency_methods_and_properties,
                                             add_usages_summaries,
@@ -217,7 +219,7 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
 
     if chars_to_tokens(len(filecontext) + len(content)) > config.llm.warn_context:
         logger.info(f"Warn context reached, limiting {rel_path}")
-        filecontext = prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
+        filecontext = knowledge_store.prepare_file_context(base_dir, rel_path, dependencies, usages, content, 
                             add_dependency_summaries, 
                             add_dependency_methods_and_properties = False,
                             add_usages_summaries = False,
@@ -229,9 +231,16 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
         logger.error(f"Max context reached, skipping {rel_path}")
         return
     
+    if chars_to_tokens(len(filecontext) + len(content)) < config.llm.min_context:
+        logger.error(f"Min context reached, skipping {rel_path}")
+        return
+    
+
     if content is None:
         logger.info(f"  [Binary file, skipping] {rel_path}")
         return
+    
+    prompt_params = params_add_containing_classes(prompt_params, rel_path, knowledge_store)
     
     # Print dependency files for debugging
     logger.info(f"""## Project context:
@@ -243,12 +252,14 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
 ## Dependencies and usages context:
 {filecontext}
 
-## File content
+## Classes to describe:
+{prompt_params['contain_classes']}
+
+## Content of the file to process:
 {content}
 --- End of file ---""")
     
     # Generate summary
-
     logger.info(f"[{processed_counter}/{total_files}] File: {rel_path}")
     summary = final_process_file(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
     
@@ -285,132 +296,6 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
     
     # Periodically report progress
     logger.info(f"Progress: {processed_counter}/{total_files} files processed")
-
-def prepare_file_context(base_dir, rel_path, 
-                         dependencies: Dict[str, DepUsage], 
-                         usages: Dict[str, DepUsage],
-                         content: str, 
-                         add_dependency_summaries, 
-                         add_dependency_methods_and_properties,
-                         add_usages_summaries,
-                         add_usages_methods,
-                         diff_window
-                         ) -> str:
-    filecontext = " "
-
-    for key, dependency in dependencies.items():
-        if dependency.dependency_description and dependency.dependency_description.file != rel_path:
-            filecontext += f"\n# `{dependency.parent_structure.full_classname}` is using `{dependency.dependency_structure.full_classname}` in lines: [{', '.join(map(str, dependency.dep.usage_lines))}]\n"
-             
-            if add_dependency_summaries:
-                check_in_content = content if add_dependency_methods_and_properties else " "
-                filecontext += f"{dependency.dependency_description.class_summary.describe('- ', check_in_content)}\n"
-            continue
-    
-    for key, dep_usage in usages.items():
-
-        parent_class_structure = dep_usage.parent_structure
-        parent_class_description = dep_usage.parent_description
-
-        dependency_class_name = dep_usage.dependency_structure.full_classname
-
-        parent_file_rel_path = dep_usage.parent_structure.source_file # Relative path of the file where the usage occurs
-        usage_line_numbers = dep_usage.dep.usage_lines # List of line numbers (1-based) where usage occurs
-
-        # skip quoting if it's the same file.
-        if parent_file_rel_path == rel_path:
-            continue
-
-        filecontext += "\n"
-
-        filecontext += f"# `{dependency_class_name}` is used by `{parent_class_structure.full_classname}` in file '{parent_file_rel_path}'\n"
-        if parent_class_description:
-            if add_usages_summaries:
-                filecontext += f"{parent_class_description.class_summary.simple_classname} summary: {parent_class_description.class_summary.summary}\n"
-            if add_usages_methods:
-                for method in parent_class_description.class_summary.methods:
-                    if "get" not in method.method_name: #ignore getters
-                        filecontext += f"- Method {method.method_name}: {method.method_summary}\n"
-
-        # Construct absolute path for reading the file where usage occurs
-        # base_dir is a parameter of llm_final_process_file
-        abs_usage_file_path = os.path.join(base_dir, parent_file_rel_path) if base_dir else parent_file_rel_path
-
-        # Get content of the usage file
-        usage_file_content_str = get_file_content_safe(abs_usage_file_path)
-
-        if usage_file_content_str:
-            usage_file_lines_all = usage_file_content_str.splitlines()
-            num_total_lines_in_file = len(usage_file_lines_all)
-
-            if num_total_lines_in_file == 0:
-                # File is empty, so no lines to include.
-                pass
-            else:
-                lines_to_include_flags = [False] * num_total_lines_in_file
-
-                for line_num_1_based in usage_line_numbers:
-                    if line_num_1_based <= 0: # Defensive check for 1-based line numbers
-                        continue
-                    
-                    line_num_0_based = line_num_1_based - 1
-                    
-                    # Ensure the usage line itself is valid before creating a window
-                    if not (0 <= line_num_0_based < num_total_lines_in_file):
-                        # Invalid usage line number provided, skip this one.
-                        # Consider logging this if it's unexpected.
-                        continue
-
-                    # Determine the window of lines to mark for inclusion
-                    # diff_window = 8
-                    start_mark_0_based = max(0, line_num_0_based - diff_window)
-                    end_mark_0_based = min(num_total_lines_in_file - 1, line_num_0_based + diff_window)
-                    
-                    for i in range(start_mark_0_based, end_mark_0_based + 1):
-                        lines_to_include_flags[i] = True
-                
-                # Construct the consolidated snippet if any lines were marked
-                if any(lines_to_include_flags):
-                    current_block_idx = 0
-                    while current_block_idx < num_total_lines_in_file:
-                        if lines_to_include_flags[current_block_idx]:
-                            # Start of a new contiguous block of lines to include
-                            block_start_0_based = current_block_idx
-                            
-                            # Find the end of this contiguous block
-                            block_end_0_based = current_block_idx
-                            while (block_end_0_based + 1 < num_total_lines_in_file and
-                                   lines_to_include_flags[block_end_0_based + 1]):
-                                block_end_0_based += 1
-                            
-                            # This block runs from block_start_0_based to block_end_0_based (inclusive)
-                            
-                            # Identify which of the original usage_line_numbers fall into this block
-                            # usage_line_numbers is a list of 1-based integers from dep_usage.dep.usage_lines
-                            original_usages_in_this_block = set()
-                            for original_ul_1_based in usage_line_numbers:
-                                original_ul_0_based = original_ul_1_based - 1
-                                if block_start_0_based <= original_ul_0_based <= block_end_0_based:
-                                    original_usages_in_this_block.add(original_ul_1_based)
-                            
-                            if original_usages_in_this_block:
-                                sorted_usages = sorted(list(original_usages_in_this_block))
-                                filecontext += f"  source of `{parent_class_structure.full_classname}` in line(s): {', '.join(map(str, sorted_usages))}\n"
-                            
-                            filecontext += "  ```\n"
-                            for line_idx_0_based in range(block_start_0_based, block_end_0_based + 1):
-                                filecontext += f"  {line_idx_0_based + 1:4d} | {usage_file_lines_all[line_idx_0_based]}\n"
-                            filecontext += "  ```\n"
-                            
-                            # Move current_block_idx to the position after this processed block
-                            current_block_idx = block_end_0_based + 1
-                        else:
-                            # This line is not included, move to the next line
-                            current_block_idx += 1
-        else:
-            print(f"  [INFO] Could not read content of '{parent_file_rel_path}' or it is a binary file.\n")
-        filecontext += "\n" # Add a newline for separation between different usage entries in filecontext
-    return filecontext
 
 def final_process(
         file_infos: List[FileInfo], 
@@ -461,10 +346,14 @@ def final_process(
 
         old_classes = knowledge_store.get_file_description(file_path)
 
+        classes_in_file = knowledge_store.get_file_structure(file_path)
+
+        is_missing_classes = len(classes_in_file) > len(old_classes)
+
         file_to_process = None
         if is_filtering_enabled:
             if only_missing:
-                if not old_classes and file_info.is_allowed_by_filter:
+                if is_missing_classes and file_info.is_allowed_by_filter:
                     file_to_process = file_info
                     
             else:
@@ -477,7 +366,7 @@ def final_process(
         # Check update only (only files that were modified)
         if is_update_only and file_to_process:
             allowed = False
-            classes_in_file = knowledge_store.get_file_structure(rel_path)
+            classes_in_file = knowledge_store.get_file_structure(file_path)
             if not classes_in_file or not old_classes:
                 allowed = True
 
@@ -580,7 +469,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
 
                 # Generate embeddings and store with embeddings.store_embeddings
                 logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
-                embedd_summary = f"Method {method.method_name}: {method.method_summary}"
+                embedd_summary = f"Method `{method.method_name}` of a `{class_summary.simple_classname}`: {method.method_summary}"
                 
                 embeddings.store_class_description_embeddings('method', class_summary.full_classname, method.method_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
 
@@ -593,7 +482,7 @@ def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project
 
                 # Generate embeddings and store with embeddings.store_embeddings
                 logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
-                embedd_summary = f"Property {property.property_name}: {property.property_summary}"
+                embedd_summary = f"Property `{property.property_name}` of a `{class_summary.simple_classname}` class: {property.property_summary}"
                 
                 embeddings.store_class_description_embeddings('property', class_summary.full_classname, property.property_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
         
@@ -646,10 +535,19 @@ def main():
         llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature, logger=llm_logger)
     elif config.llm.mode == 'ollama':
         logger.info("Initializing connection to Ollama...")
-        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger)
+        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger, max_context=config.llm.max_context)
     elif config.llm.mode == 'anthropic':
         logger.info("Initializing connection to Anthropic...")
         llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
+    elif config.llm.mode == 'openai':
+        logger.info("Initializing connection to OpenAI...")
+        llm_execution = OpenAILlmExecution(
+            model=config.llm.openai.model,
+            temperature=config.llm.openai.temperature,
+            key=config.llm.openai.key,
+            base_url=config.llm.openai.url,
+            logger=llm_logger
+        )
     else:
         raise ValueError(f"Unsupported LLM mode: {config.llm.mode}")
     
@@ -698,7 +596,7 @@ def main():
     prompt_params = params_add_project_context(prompt_params, input_dir)
     
     # Determine which processes to run based on mode
-    run_pre_process = mode is None or mode == 'Pre'
+    run_pre_process = mode == 'Pre'
     run_final_process = mode is None or mode == 'Final'
     run_embeddings = mode is None or mode == 'Embedd'
 
@@ -717,7 +615,7 @@ def main():
     # Final processing step
     if run_final_process:
         logger.info("=== Running Final processing ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
+        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json", input_dir)
 
         is_force = args.force 
         is_update_only = args.update
@@ -742,7 +640,7 @@ def main():
     if run_embeddings and not run_final_process:
         # If we're only running embeddings and not final process, we need to load final data
         logger.info("=== Loading final processed data from storage ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json")
+        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json", input_dir)
 
     # Embeddings processing step
     if run_embeddings:

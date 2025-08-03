@@ -5,7 +5,8 @@ from knowledge.model import ClassDescription, MethodDescription, VariableDescrip
 
 @dataclass
 class SearchResult:
-    entry: EmbeddingEntry
+    full_classname: str
+    file: str
     details: List[MethodDescription | VariableDescription]
     class_description: Optional[ClassDescription] = None
     vector_score: float = 0.0
@@ -22,55 +23,66 @@ class SearchResult:
                 content += f"\n Property: `{detail.property_name}`: {detail.property_summary}"
         return content
     
-    def add_detail(self, item: EmbeddingEntry, class_info: ClassDescription):
+
+    def add_detail_embedding(self, item: EmbeddingEntry, class_info: ClassDescription):        
+        self.add_detail(item.full_classname, item.type, item.detail, class_info)
+
+    def add_detail(self, classname, type, detail, class_info: ClassDescription):
 
         if not class_info:
-            print (f"Warn: no description found for embedding entry: {item.full_classname}")
+            print (f"Warn: no description found for embedding entry: {classname}")
 
         methods = [method.method_name for method in self.details if isinstance(method, MethodDescription)]
         properties = [property.property_name for property in self.details if isinstance(property, VariableDescription)]
 
-        if item.type == 'method':
-            detail = class_info.find_method(item.detail)
+        if type == 'method':
+            detail = class_info.find_method(detail)
             if detail and detail.method_name not in methods:
                 self.details.append(detail)
             
-        if item.type == 'property':
-            detail = class_info.find_property(item.detail)
+        if type == 'property':
+            detail = class_info.find_property(detail)
             if detail and detail.property_name not in properties:
                 self.details.append(detail)
+
+    def merge_search_result(self, details: List):
+        for detail in details:
+            if isinstance(detail, MethodDescription):
+                self.add_detail(self.full_classname, "method", detail.method_name, self.class_description)
+            if isinstance(detail, VariableDescription):
+                self.add_detail(self.full_classname, "property", detail.property_name, self.class_description)
 
 @dataclass
 class CombinedSearchResults:
     results: Dict[str, SearchResult] = field(default_factory=dict)
 
-    def add_detail(self, item: EmbeddingEntry, class_info: ClassDescription):
+    def merge_search_result(self, search_result: SearchResult, class_info: ClassDescription):
 
         if not class_info:
-            print (f"Warn: no description found for embedding entry: {item.full_classname}")
+            print (f"Warn: no description found for embedding entry: {search_result.full_classname}")
 
-        if item.full_classname not in self.results:
-            result = SearchResult(entry=item, details=[], class_description=class_info)
-            self.results[item.full_classname] = result
+        if search_result.full_classname not in self.results:
+            search_result.class_description = class_info
+            self.results[search_result.full_classname] = search_result
+            result = search_result
         else:
-            result = self.results[item.full_classname]
+            result = self.results[search_result.full_classname]
+            result.merge_search_result(search_result.details)
+                        
+    def add_vector_result(self, full_classname: str, score: float):
+        if full_classname not in self.results:
+            return
+        self.results[full_classname].vector_score += score
 
-        result.add_detail(item, class_info)
+    def add_bm25_result(self, full_classname: str, score: float):
+        if full_classname not in self.results:
+            return
+        self.results[full_classname].bm25_score += score
 
-    def add_vector_result(self, item: EmbeddingEntry, score: float):
-        if item.full_classname not in self.results:
-            self.results[item.full_classname] = SearchResult(entry=item, details=[])
-        self.results[item.full_classname].vector_score += score
-
-    def add_bm25_result(self, item: EmbeddingEntry, score: float):
-        if item.full_classname not in self.results:
-            self.results[item.full_classname] = SearchResult(entry=item, details=[])
-        self.results[item.full_classname].bm25_score += score
-
-    def add_rerank_result(self, item: EmbeddingEntry, score: float):
-        if item.full_classname not in self.results:
-            self.results[item.full_classname] = SearchResult(entry=item, details=[])
-        self.results[item.full_classname].rerank_score = +score
+    def add_rerank_result(self, full_classname: str, score: float):
+        if full_classname not in self.results:
+            return
+        self.results[full_classname].rerank_score = +score
 
     def get_sorted_results(self) -> List[SearchResult]:
         for result in self.results.values():

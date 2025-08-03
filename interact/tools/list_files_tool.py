@@ -37,7 +37,7 @@ class ListFilesTool:
                 print(f"No files found in source directories: {self.source_dirs}")
                 return "No files found in the project directory."
 
-            observation = "\n".join(sorted(files))
+            observation = f"Observation from {self.name}\n" + ("\n".join(sorted(files)))
             self.logger.debug(f"Tool result ({self.name}):\n{observation}")
             return observation
             

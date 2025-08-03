@@ -8,13 +8,16 @@ from typing import List, Dict
 
 from core.config.config import load_config
 from knowledge.knowledge_store import KnowledgeStore
-from knowledge.embeddings import Embeddings
+from knowledge.embeddings_store import Embeddings
 from knowledge.model import MethodDescription, VariableDescription
 from core.search.embedding_entry import EmbeddingEntry
 from core.search.search import KnowledgeSearch
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
+from core.llm.llm_execution_openai import OpenAILlmExecution
+from core.context.build_context import BuildContext
+from interact.memory.memory import Memory
 from core.utils.file_utils import get_file_content, get_all_files
 from core.utils.logging_utils import setup_logging, setup_llm_logger
 
@@ -35,12 +38,11 @@ def similarity_search(args, config):
     
     output_results = []
     for res in results:
-        item: EmbeddingEntry = res.entry
         content = res.describe_content()        
         output_results.append({
-            'full_classname': item.full_classname,
+            'full_classname': res.full_classname,
             'content': content,
-            'file_path': item.rel_path,
+            'file_path': res.file,
             'score': res.vector_score,
             'rerank_score': res.rerank_score
         })
@@ -69,6 +71,35 @@ def bm25_search(args, config):
         })
         
     logger.info(json.dumps(output_results, indent=2))
+        
+
+def build_context_command(args, config):
+    """
+    Builds context for a given user task.
+    """
+    global llm_execution, embeddings, knowledge_store, logger
+    
+    # Initialize components required for BuildContext
+    search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
+    memory = Memory(knowledge_store)
+
+    llm_execution.on_load()
+    
+    # Initialize and run the context building process
+    context_builder = BuildContext(
+        input_dir=args.input_dir,
+        config=config,
+        llm_execution=llm_execution,
+        knowledge_store=knowledge_store,
+        knowledge_search=search,
+        memory=memory,
+        logger=logger
+    )
+    
+    context_builder.build(user_task=args.task)
+    
+    # logger.info(output)
+
 
 def summarize_project(args, config):
     """
@@ -164,6 +195,11 @@ def main():
     summarize_parser = subparsers.add_parser('summarize_project', help='Generate a summary of the entire project.')
     summarize_parser.set_defaults(func=summarize_project)
 
+    # Build context command
+    build_context_parser = subparsers.add_parser('build_context', help='Build context for a user task.')
+    build_context_parser.add_argument('task', type=str, help='The user task description.')
+    build_context_parser.set_defaults(func=build_context_command)
+
     args = parser.parse_args()
     
     # Initialize logging
@@ -186,20 +222,27 @@ def main():
     if config.llm.mode == 'mlx':
         llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature, logger=llm_logger)
     elif config.llm.mode == 'ollama':
-        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger)
+        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger, max_context=config.llm.max_context)
     elif config.llm.mode == 'anthropic':
         llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
+    elif config.llm.mode == 'openai':
+        llm_execution = OpenAILlmExecution(model=config.llm.openai.model, temperature=config.llm.openai.temperature, key=config.llm.openai.key, base_url=config.llm.openai.url, logger=llm_logger)
     
     embeddings = Embeddings(config, logger)
     embeddings.initialize(input_dir)
 
     # Load knowledge store data
+    preprocess_json_path = os.path.join(input_dir, ".ai-agent", "db_preprocess.json")
     final_json_path = os.path.join(input_dir, ".ai-agent", "db_final.json")
+    if not os.path.exists(preprocess_json_path):
+        logger.error(f"Error: Knowledge base file not found at {preprocess_json_path}")
+        sys.exit(1)
     if not os.path.exists(final_json_path):
         logger.error(f"Error: Knowledge base file not found at {final_json_path}")
         logger.error("Please run 'build_knowledge.py' first.")
         sys.exit(1)
-    knowledge_store.read_storage_final(final_json_path)
+    knowledge_store.read_storage_pre_process(preprocess_json_path)
+    knowledge_store.read_storage_final(final_json_path, input_dir)
 
     # Execute the function for the chosen command
     if hasattr(args, 'func'):

@@ -75,7 +75,7 @@ class GetFileContentTool:
                 
             chat_state.get_file_used_count += 1
             observation = f"- File added to the memory: '{path}'"
-            chat_state.memory.add_file(path, content)
+            chat_state.memory.add_file(path, content, self.base_path)
 
             self.logger.debug(f"Tool result ({self.name}), full path: {full_path}:\n{observation}")
             return observation

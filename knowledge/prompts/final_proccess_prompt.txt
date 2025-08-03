@@ -15,5 +15,8 @@ For enums in summary please list all values and explain how each is being used i
 ## Dependencies and usages context:
 {filecontext}
 
+## Classes to describe:
+{contain_classes}
+
 ## Content of the file to process:
 {content}

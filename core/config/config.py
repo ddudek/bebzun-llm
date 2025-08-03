@@ -16,21 +16,30 @@ class AnthropicConfig(BaseModel):
     key: str = "YOURYOUR_ANTHROPIC_API_KEY"
     model: str = "claude-3-opus-20240229"
 
+class OpenAIConfig(BaseModel):
+    key: str = "YOUR_OPENAI_API_KEY"
+    model: str = "gpt-4-turbo"
+    temperature: float = 0.7
+    url: str = "https://localhost:8080/v1"
+
 class EmbeddingsConfig(BaseModel):
     model: str = "nomic-embed-text"
     vector_dimension: int = 768
     execution: Literal['mlx', 'ollama'] = 'ollama'
 
 class LlmConfig(BaseModel):
-    mode: Literal['mlx', 'ollama', 'anthropic']
+    mode: Literal['mlx', 'ollama', 'anthropic', 'openai']
     mlx: MlxConfig = Field(default_factory=MlxConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     max_context: int = Field(default=128000)
     warn_context: int = Field(default=75000)
+    min_context: int = Field(default=0)
 
 class RerankerConfig(BaseModel):
-    model: Literal["none", "experimental-transfrormers-qwen3"] = "none"
+    model: Literal["none", "experimental-transfrormers-qwen3", "llama_rerank"] = "none"
+    url: str = "http://127.0.0.1:8012/v1/rerank"
 
 class Config(BaseModel):
     source_dirs: List[str]

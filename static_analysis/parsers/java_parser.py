@@ -25,7 +25,7 @@ class JavaParser(BaseParser):
     def __init__(self, verbose: bool = False):
         """Initialize the Java parser with tree-sitter language grammar."""
         self.verbose = verbose
-        self.new_scope_node_types = ["class_declaration", "method_declaration", "constructor_declaration"]
+        self.new_scope_node_types = ["class_declaration", "interface_declaration", "method_declaration", "constructor_declaration"]
         try:
             self.java_language = Language(tsjava.language())
             self.tree_sitter_parser = Parser()
@@ -92,6 +92,8 @@ class JavaParser(BaseParser):
 
             package_name = self._extract_package_name(tree.root_node)
             class_nodes = self._find_nodes_by_type(tree.root_node, 'class_declaration')
+            interface_nodes = self._find_nodes_by_type(tree.root_node, 'interface_declaration')
+            class_nodes.extend(interface_nodes)
 
             if not package_name:
                 print(f"Error: can't find package name for {file_path}")
@@ -203,7 +205,10 @@ class JavaParser(BaseParser):
         package = self._extract_package_name(tree.root_node)
         all_known_types = known_classes.union(set(imports.keys()))
 
-        class_nodes = self._find_nodes_by_type(tree.root_node, 'class_declaration')
+        class_nodes = []
+        class_nodes.extend(self._find_nodes_by_type(tree.root_node, 'class_declaration'))
+        class_nodes.extend(self._find_nodes_by_type(tree.root_node, 'interface_declaration'))
+
         target_class_node = None
         for class_node in class_nodes:
             name_node = class_node.child_by_field_name('name')

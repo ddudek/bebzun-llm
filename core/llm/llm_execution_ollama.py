@@ -1,15 +1,18 @@
 import json
 import logging
+import ollama
 from ollama import Client
 from typing import Dict, List, Union, Any
 from core.utils.token_utils import tokens_to_chars, chars_to_tokens
 
 class OllamaLlmExecution:
-    def __init__(self, model: str, temperature: float, url: str, logger: logging.Logger):
+    def __init__(self, model: str, temperature: float, url: str, logger: logging.Logger, max_context: int):
         self.logger = logger
-        self.options: dict = {'temperature': temperature}
+        self.options: dict = {'temperature': temperature, "top_p": 0.8, "top_k": 20, "min_p": 0}
         self.model = model
         self.base_url = url
+        self.current_ctx = 16 * 1024
+        self.max_context = max_context
 
     def on_load(self):
         return
@@ -19,17 +22,43 @@ class OllamaLlmExecution:
             "model": self.model,
             "options": self.options
             }
+    
+    def _calc_context(self, prompt_length) -> int:
+        final_num_ctx = self.current_ctx
+
+        new_ctx = prompt_length + 3000 # some headroom
+
+        if new_ctx > final_num_ctx:
+            final_num_ctx = 16 * 1024
+        
+        if new_ctx > final_num_ctx:
+            final_num_ctx = 32 * 1024
+
+        if new_ctx > final_num_ctx:
+            final_num_ctx = 48 * 1024
+
+        if new_ctx > final_num_ctx:
+            final_num_ctx = 64 * 1024
+        
+        if new_ctx > final_num_ctx:
+            final_num_ctx = new_ctx
+
+        if final_num_ctx > self.max_context:
+            final_num_ctx = self.max_context
+
+        return final_num_ctx
 
     def llm_invoke(self, system_prompt, prompt, schema):
         worker_model = self.model
         client = Client(host=self.base_url)
 
-        self.logger.info(f"LLM system prompt: {system_prompt}")
-        self.logger.info(f"LLM prompt: {prompt}")
+        mlx_user_prompt_bare = f"""Respond in JSON format. Only output valid JSON, do not include any explanations or markdown formatting. Ensure all required fields are included.
+    
+    {prompt}"""
 
         messages=[
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': prompt}
+                    {'role': 'user', 'content': mlx_user_prompt_bare}
                 ]
 
         prompt_size: int = 0
@@ -37,19 +66,28 @@ class OllamaLlmExecution:
         for message in messages:
             message_formatted = json.dumps(message, indent=2).replace("\\n","\n")
             prompt_size += len(message_formatted)
-            full_prompt += message_formatted + "\n"
-        self.logger.debug(f"LLM prompt: \n{full_prompt}\n---\nEnd of prompt, size: {prompt_size} b ({chars_to_tokens(prompt_size)} tks)")
+            full_prompt += message_formatted + "\n"        
 
         num_ctx = int(chars_to_tokens(prompt_size))
-        options: dict = self.options
-        options["num_ctx"] = num_ctx
+        options: dict = self.options.copy()
+        
+        if num_ctx > self.max_context:
+            raise RuntimeError(f"Exceeded max context: {num_ctx} (max: {self.max_context})")
+
+        final_num_ctx = self._calc_context(num_ctx)
+        
+        self.logger.debug(f"Ollama context size: {final_num_ctx}")
+        print(f"Ollama context size: {final_num_ctx}")
+
+        options["num_ctx"] = final_num_ctx
         
         stream = client.chat(
                                     messages=messages,
                                     model=worker_model,
-                                    format=schema,
                                     options=options,
-                                    stream=True
+                                    stream=True,
+                                    think=False,
+                                    format=schema
                                     )
             
         raw_response = ""
@@ -60,6 +98,7 @@ class OllamaLlmExecution:
 
         #print(f"\n", end='', flush=True)
         self.logger.debug(f"LLM response: {raw_response}")
+        self.current_ctx = final_num_ctx
         return json.loads(raw_response)
 
     def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, verbose=False) -> str:
@@ -78,11 +117,19 @@ class OllamaLlmExecution:
             prompt_size += len(message_formatted)
             full_prompt += message_formatted + "\n"
 
-        num_ctx = int(chars_to_tokens(prompt_size*2))
-        options: dict = self.options
-        options["num_ctx"] = num_ctx
+        num_ctx = int(chars_to_tokens(prompt_size))
+        
+        if num_ctx > self.max_context:
+            raise RuntimeError(f"Exceeded max context: {num_ctx} (max: {self.max_context})")
+
+        final_num_ctx = self._calc_context(num_ctx)
+
+        options["num_ctx"] = final_num_ctx
 
         self.logger.info(f"LLM query: {messages}")
+
+        self.logger.debug(f"Ollama context size: {final_num_ctx}")
+        print(f"Ollama context size: {final_num_ctx}")
 
         stream = client.chat(
             messages=messages,
@@ -98,4 +145,5 @@ class OllamaLlmExecution:
             raw_response+=chunk.message.content
         
         self.logger.info(f"LLM response: {raw_response}")
+        self.current_ctx = final_num_ctx
         return raw_response

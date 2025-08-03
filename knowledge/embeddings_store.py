@@ -2,15 +2,14 @@ from typing import Dict, List, Optional
 import os
 import sys
 import json
-import ollama
 import logging
 import mlx.core as mx
 
 from core.config.config import Config, EmbeddingsConfig
-from mlx_embeddings.utils import load
-from mlx_embeddings.tokenizer_utils import TokenizerWrapper
-from core.search.search_result import SearchResult
 from core.search.embedding_entry import EmbeddingEntry
+from knowledge.embeddings.embedding_execution import EmbeddingExecution
+from knowledge.embeddings.embedding_execution_mlx import MlxEmbeddingExecution
+from knowledge.embeddings.embedding_execution_ollama import OllamaEmbeddingExecution
 
 class Embeddings:
     def __init__(self, config: Config, logger: logging.Logger):
@@ -18,30 +17,31 @@ class Embeddings:
         self.storage_path: Optional[str] = None
         self.data: Dict[str, EmbeddingEntry] = {}
         self.config = config
-        self.mlx_model = None
-        self.mlx_tokenizer: TokenizerWrapper = None
         
-        # Handle missing embeddings config gracefully
-        embeddings_config = getattr(config, 'embeddings', None)
-        if embeddings_config is None:
-            embeddings_config = EmbeddingsConfig()
+        embeddings_config = getattr(config, 'embeddings', EmbeddingsConfig())
         
         self.embedding_model = embeddings_config.model
         self.vector_dimension = embeddings_config.vector_dimension
+        self.execution_mode = embeddings_config.execution
+        self.embedding_execution: EmbeddingExecution
+
+        if self.execution_mode == 'mlx':
+            self.embedding_execution = MlxEmbeddingExecution(logger=logger)
+        elif self.execution_mode == 'ollama':
+            self.embedding_execution = OllamaEmbeddingExecution(logger=logger)
+        else:
+            raise ValueError(f"Unsupported embeddings execution mode: {self.execution_mode}")
 
     def initialize(self, base_dir: str, create: bool = False):
         """Initialize JSON file storage and load embeddings"""
         
-        # Create storage path
         self.storage_path = os.path.join(base_dir, ".ai-agent", "db_embeddings.json")
         
         self.logger.info(f"Using embeddings file: {self.storage_path}")
         
-        # Create directory if it doesn't exist
         if create:
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
         else:
-            # Load data from JSON file
             if os.path.exists(self.storage_path):
                 with open(self.storage_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -54,6 +54,7 @@ class Embeddings:
             else:
                 raise Exception("db_embeddings.json file not found")
 
+        self.embedding_execution.init_embeddings(self.embedding_model)
         return True
 
     def is_loaded(self) -> bool:
@@ -71,44 +72,7 @@ class Embeddings:
             List of embedding values
         """
         try:
-            embeddings_config = getattr(self.config, 'embeddings', None)
-            if embeddings_config is None:
-                embeddings_config = EmbeddingsConfig()
-            
-            if embeddings_config.execution == "ollama":
-                # Call ollama API directly to generate embeddings
-                response = ollama.embeddings(
-                    model=self.embedding_model,
-                    prompt=text
-                )
-                
-                # Extract embeddings from response
-                embeddings = response.get('embedding', [])
-                
-                # Verify embedding dimension
-                if len(embeddings) != self.vector_dimension:
-                    self.logger.warning(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
-                
-                return embeddings
-            elif embeddings_config.execution == "mlx":
-                if self.mlx_model is None or self.mlx_tokenizer is None:
-                    print(f"Loading mlx model: {self.embedding_model}")
-                    self.mlx_model, self.mlx_tokenizer = load(self.embedding_model)
-
-                input_ids = self.mlx_tokenizer.encode(text, return_tensors="mlx")
-                outputs = self.mlx_model(input_ids)
-                embeddings_te: Optional[mx.array] = outputs.text_embeds
-                embeddings = embeddings_te[1].tolist()
-
-                # to workaround leaking memory in mlx for some reason:
-                mx.clear_cache()
-
-                if len(embeddings) != self.vector_dimension:
-                    self.logger.warning(f"Warning: Expected embedding dimension {self.vector_dimension}, got {len(embeddings)}")
-                
-                return embeddings
-            else:
-                raise ValueError(f"Unsupported embeddings execution method: {embeddings_config.execution}")
+            return self.embedding_execution.generate_embeddings(text, self.vector_dimension)
         except Exception as e:
             self.logger.error(f"Error generating embeddings: {str(e)}")
             return []
@@ -156,7 +120,7 @@ class Embeddings:
         except Exception as e:
             self.logger.error(f"Error storing embeddings for {classname}: {str(e)}")
 
-    def search_similar(self, query: str, limit: int = 5) -> List[SearchResult]:
+    def search_similar(self, query: str, limit: int = 5) -> List[tuple[EmbeddingEntry, float]]:
         """
         Search for similar documents in the vector store
         
@@ -202,9 +166,10 @@ class Embeddings:
             results = []
             for i in range(min(limit, len(sorted_indices))):
                 idx = sorted_indices[i].item()
-                entry = stored_entries[idx]
+                entry: EmbeddingEntry = stored_entries[idx]
                 score = float(similarities[idx].item())
-                results.append(SearchResult(entry, vector_score=score, details=[]))
+                
+                results.append((entry, score))
             
             return results
 

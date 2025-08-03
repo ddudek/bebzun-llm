@@ -7,11 +7,13 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from core.config.config import load_config
+from core.llm.llm_execution_openai import OpenAILlmExecution
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
-from knowledge.embeddings import Embeddings
+from knowledge.embeddings_store import Embeddings
 from knowledge.knowledge_store import KnowledgeStore
+from core.search.search import KnowledgeSearch, SearchResult
 from knowledge.model import ClassDescription
 from core.llm.prepare_prompts import params_add_project_context
 from interact.memory.memory import Memory
@@ -21,8 +23,226 @@ from interact.tools.search_knowledge_tool import SearchKnowledgeTool
 from interact.tools.finish_step_tool import FinishStepTool
 from interact.tools.final_answer_tool import FinalAnswerTool
 from interact.chat_state import ChatState
-from interact.chat.messages.models import AssistantMessage, BaseMessage, FollowUpMessage, ToolObservationMessage, UserMessage, UnlockToolMessage, MemoryMessage
+from interact.chat.messages.models import AssistantMessage, BaseMessage, ToolObservationMessage, UserMessage, MemoryMessage
 from core.utils.logging_utils import setup_logging, setup_llm_logger
+from core.context.build_context import BuildContext
+
+def main():
+    parser = argparse.ArgumentParser(description='Chat with Ollama model with file listing and embeddings search capabilities.')
+    parser.add_argument('-i', '--input-dir', required=True, help='Directory to list files from. Overrides config file.')
+    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
+    parser.add_argument('--log-file', help='Path to the log file.')
+    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
+    parser.add_argument('-p', '--prompt', help='Initial user prompt.')
+
+    args = parser.parse_args()
+    
+    global logger
+    global llm_logger
+    logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
+    llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
+
+    # Determine input directory    
+    input_dir = os.path.abspath(args.input_dir)
+    
+    # Load configuration
+    config_file_path = os.path.join(input_dir, ".ai-agent", f"config.json")
+    config = load_config(config_file_path)
+
+    # Initialize LLM execution
+    if config.llm.mode == 'mlx':
+        print(f"Loading MLX model: {config.llm.mlx.model}")
+        llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature, logger=llm_logger)
+    elif config.llm.mode == 'ollama':
+        print(f"Loading Ollama model: {config.llm.ollama.model}")
+        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger, max_context=config.llm.max_context)
+    elif config.llm.mode == 'anthropic':
+        print(f"Connection to Anthropic model: {config.llm.anthropic.model}")
+        llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
+    elif config.llm.mode == 'openai':
+        logger.info("Initializing connection to OpenAI...")
+        llm_execution = OpenAILlmExecution(
+            model=config.llm.openai.model,
+            temperature=config.llm.openai.temperature,
+            key=config.llm.openai.key,
+            base_url=config.llm.openai.url,
+            logger=llm_logger
+        )
+    else:
+        raise ValueError(f"Unsupported LLM mode: {config.llm.mode}")
+    
+    llm_execution.on_load()
+    
+    embeddings_instance = None
+    try:
+        embeddings_instance = Embeddings(config, logger)
+        if not embeddings_instance.initialize(input_dir):
+            logger.error("Embeddings storage is not available. Context search will be disabled.")
+            embeddings_instance = None
+    except Exception:
+        logger.exception("Error initializing embeddings:")
+        sys.exit(1)
+
+    knowledge = KnowledgeStore()
+    knowledge_file_path = os.path.join(input_dir, ".ai-agent", f"db_final.json")
+    structure_file_path = os.path.join(input_dir, ".ai-agent", f"db_preprocess.json")
+    if os.path.exists(knowledge_file_path):
+        knowledge.read_storage_final(knowledge_file_path, input_dir)
+        logger.info(f"Successfully loaded knowledge db from {knowledge_file_path}")
+    else:
+        logger.error(f"Warning: knowledge db file not found at {knowledge_file_path}. Context might be incomplete.")
+        sys.exit(1)
+
+    if os.path.exists(structure_file_path):
+        knowledge.read_storage_pre_process(structure_file_path)
+        logger.info(f"Successfully loaded preprocess db from {structure_file_path}")
+    else:
+        logger.error(f"Warning: preprocess db file not found at {structure_file_path}. Context might be incomplete.")
+        sys.exit(1)
+
+    knowledge_search = KnowledgeSearch(embeddings_instance, knowledge, config, logger)
+
+    chat_state = ChatState(knowledge)
+
+    context_builder = BuildContext(
+        input_dir=input_dir,
+        config=config,
+        llm_execution=llm_execution,
+        knowledge_store=knowledge,
+        knowledge_search=knowledge_search,
+        memory=chat_state.memory,
+        logger=logger
+    )
+    
+    step3_tools = []
+
+    if embeddings_instance and embeddings_instance.is_loaded():
+        search_knowledge_tool = SearchKnowledgeTool(input_dir, knowledge_store=knowledge, knowledge_search=knowledge_search, logger=logger, config=config)
+        step3_tools.append(search_knowledge_tool)
+
+    if config.source_dirs:
+        list_files_tool = ListFilesTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
+        get_file_content_tool = GetFileContentTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
+        step3_tools.append(list_files_tool)
+        step3_tools.append(get_file_content_tool)
+    
+    llm_initialized = False
+    
+    logger.info(f"Chat initialized with {llm_execution.model_desc()} model.")
+    if args.input_dir:
+        logger.info(f"File tools enabled for directory: {args.input_dir}")
+    if embeddings_instance and embeddings_instance.is_loaded():
+        logger.info("Embeddings context search enabled.")
+    logger.info("Type 'exit' to end the conversation.")
+
+    messages: List[BaseMessage] = []
+
+    user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
+    user_input = user_initial_input
+
+    messages.append(UserMessage(content=f"# User task:\n<user_task>\n{user_input}\n</user_task>"))
+
+    context_builder.build(user_input)
+
+    # User input loop
+    if not llm_initialized:
+        llm_initialized = True
+        llm_execution.on_load()
+    
+    tool_observation_flag = False
+
+    # LLM steps loop
+    try:
+        while True:
+            skip_ai = False
+
+            # user input
+            if tool_observation_flag == False or tool_used_counter > 3:
+                user_input = input("\nYou: ").strip()
+
+                if user_input.lower() == 'exit':
+                    print("\nGoodbye!")
+                    exit()
+
+                if user_input.startswith('\\'):
+                    user_input = user_input.replace('\\','/')
+                
+                if user_input.startswith('/add '):
+                    query = user_input[5:]
+                    if query:
+                        add_class_memory(chat_state, query, input_dir, knowledge)
+                    skip_ai = True
+
+                if user_input.startswith('/del '):
+                    count = int(user_input[5:])
+                    if count > 0:
+                        del messages[-count:]
+                        print(messages)
+                    skip_ai = True
+
+                if user_input.startswith('/list'):
+                    print("\n".join(f"- {type(message).__name__}:" + message.content[:30].replace('\n', '') + "..." for message in messages))
+                    skip_ai = True
+
+                if user_input.startswith('/memory'):
+                    print(f"Memory:\n{chat_state.memory.get_formatted_memory_compact()}")
+                    skip_ai = True
+                
+                if not user_input:
+                    skip_ai = True
+
+                if not skip_ai:
+                    messages.append(UserMessage(content=user_input))
+                    tool_used_counter = 0
+
+            tool_observation_flag = False
+
+            if skip_ai:
+                continue
+
+            # LLM invoke
+            messages_formatted = messages_to_llm_input(messages, chat_state, step3_tools, input_dir)
+            print(f"\nAI:")
+            response_content = llm_execution.llm_chat(messages_formatted, verbose=True)
+            
+            response_content_cleaned = clean_thinking_tag(response_content)
+
+            messages.append(AssistantMessage(content=response_content_cleaned))
+
+            matches = find_tool_invocations(response_content_cleaned)
+
+            if len(matches) > 0:
+                tool_used_counter += 1
+                tool_observation_flag = True
+
+            for match in matches:
+                tool_name = match.group(1).strip()
+                tool_content = match.group(2).strip()
+
+                tools_for_step = step3_tools
+                tool_found = next((t for t in tools_for_step if t.name == tool_name), None)
+
+                if tool_found:
+                    param_pattern = r"<(\w+)>(.*?)</\1>"
+                    param_matches = re.findall(param_pattern, tool_content, re.DOTALL)
+                    tool_kwargs = {key.strip(): value.strip() for key, value in param_matches}
+                    tool_kwargs['original_query'] = user_initial_input
+                    
+                    tool_output = tool_found.run(chat_state, **tool_kwargs)
+                    print(f"\nAgent:\n{tool_output}")
+                    logger.debug(tool_output)
+                    
+                    tool_message = ToolObservationMessage(content=tool_output, tool_name=tool_name)
+                    messages.append(tool_message)
+                else:
+                    error_message = f"Error: Tool {tool_name} not found."
+                    tool_message = ToolObservationMessage(content=error_message, tool_name=tool_name, is_error=True)
+                    messages.append(tool_message)
+
+                    logger.error(error_message)
+
+    except Exception:
+        logger.exception("Error occurred:")
 
 
 def get_system_prompt(tools: List[Any], input_dir: str) -> str:
@@ -41,24 +261,13 @@ def get_system_prompt(tools: List[Any], input_dir: str) -> str:
         tools_description=tools_description
     )
 
-def get_folloup_prompt(chat_state: ChatState, tools: List[Any]) -> str:
-    if chat_state.current_step == 1:
-        if chat_state.search_used_count > 1:
-            return "\nDo you want to search again for more knowledge or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
-        else:
-            return "\nPlease use search_knowledge_tool again with different queries."
-    if chat_state.current_step == 2:
-        return "\nDo you want to find more code or finish this step? You must use one of these tools:\n" + ("\n".join([f"- {t.name}" for t in tools]))
-    
-    return ""
-
-def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, STEP_TOOLS, input_dir: str) -> List[Dict[str, Any]]:
+def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, tools, input_dir: str) -> List[Dict[str, Any]]:
     """Concatenates a list of agent message objects to a short list with a single memory state."""
     output = []
-    system_prompt = get_system_prompt(STEP_TOOLS[chat_state.current_step], input_dir)
+    system_prompt = get_system_prompt(tools, input_dir)
     output.append({"role": "system", "content": system_prompt})
 
-    memory_output = f"\n{chat_state.memory.get_formatted_memory(chat_state.current_step)}\n"
+    memory_output = f"\n{chat_state.memory.get_formatted_memory()}\n"
     
     # Find the index of the last relevant tool message
     last_tool_idx = -1
@@ -75,17 +284,17 @@ def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, ST
             if i == last_tool_idx:
                 processed_messages.append(MemoryMessage(content=memory_output))
     else:
+        processed_messages = messages.copy()
         # Find last user message to insert memory before it
         last_user_idx = -1
-        for i, msg in reversed(list(enumerate(messages))):
+        for i, msg in reversed(list(enumerate(processed_messages))):
             if isinstance(msg, UserMessage):
                 last_user_idx = i
                 break
         if last_user_idx != -1:
-            messages.insert(last_user_idx, MemoryMessage(content=memory_output))
+            processed_messages.insert(last_user_idx, MemoryMessage(content=memory_output))
         else:
-            messages.append(MemoryMessage(content=memory_output))
-        processed_messages = messages
+            processed_messages.append(MemoryMessage(content=memory_output))
 
     # 2. Concatenate messages
     current_content = ""
@@ -110,217 +319,20 @@ def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, ST
 
     return output
 
-def main():
-    parser = argparse.ArgumentParser(description='Chat with Ollama model with file listing and embeddings search capabilities.')
-    parser.add_argument('-i', '--input-dir', required=True, help='Directory to list files from. Overrides config file.')
-    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
-    parser.add_argument('--log-file', help='Path to the log file.')
-    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
-    parser.add_argument('-p', '--prompt', help='Initial user prompt.')
+def add_class_memory(chat_state: ChatState, query: str, input_dir: str, knowledge: KnowledgeStore):
+    class_info = knowledge.find_class_description_extended(query)
+    if class_info:
+        print(f"Added: `{class_info.class_summary.full_classname}`")
+        abs_file_path = os.path.join(input_dir, class_info.file)
+        file_size = os.path.getsize(abs_file_path)
 
-    args = parser.parse_args()
-    
-    global logger
-    global llm_logger
-    logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
-    llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
-
-    # Determine input directory    
-    input_dir = os.path.abspath(args.input_dir)
-    
-    # Load configuration
-    config_file_path = os.path.join(input_dir, ".ai-agent", f"config.json")
-    config = load_config(config_file_path)
-
-    
-    embeddings_instance = None
-    try:
-        embeddings_instance = Embeddings(config, logger)
-        if not embeddings_instance.initialize(input_dir):
-            logger.error("Embeddings storage is not available. Context search will be disabled.")
-            embeddings_instance = None
-    except Exception:
-        logger.exception("Error initializing embeddings:")
-        sys.exit(1)
-
-    knowledge = KnowledgeStore()
-    knowledge_file_path = os.path.join(input_dir, ".ai-agent", f"db_final.json")
-    if os.path.exists(knowledge_file_path):
-        knowledge.read_storage_final(knowledge_file_path)
-        logger.info(f"Successfully loaded knowledge db from {knowledge_file_path}")
-    else:
-        logger.error(f"Warning: knowledge db file not found at {knowledge_file_path}. Context might be incomplete.")
-        sys.exit(1)
-
-         # Initialize LLM execution
-    if config.llm.mode == 'mlx':
-        print(f"Loading MLX model: {config.llm.mlx.model}")
-        llm_execution = MlxLlmExecution(model=config.llm.mlx.model, temperature=config.llm.mlx.temperature, logger=llm_logger)
-    elif config.llm.mode == 'ollama':
-        print(f"Loading Ollama model: {config.llm.ollama.model}")
-        llm_execution = OllamaLlmExecution(model=config.llm.ollama.model, temperature=config.llm.ollama.temperature, url=config.llm.ollama.url, logger=llm_logger)
-    elif config.llm.mode == 'anthropic':
-        print(f"Connection to Anthropic model: {config.llm.anthropic.model}")
-        llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
-    else:
-        raise ValueError(f"Unsupported LLM mode: {config.llm.mode}")
-
-    final_answer_tool = FinalAnswerTool()
-    step1_tools = [FinishStepTool()]
-    step2_tools = [FinishStepTool()]
-    step3_tools = [final_answer_tool]
-
-    search_tool_name = "search_knowledge_tool"
-    if embeddings_instance and embeddings_instance.is_loaded():
-        search_knowledge_tool = SearchKnowledgeTool(embeddings=embeddings_instance, knowledge_store=knowledge, logger=logger, config=config)
-        search_tool_name = search_knowledge_tool.name
-        step1_tools.append(search_knowledge_tool)
-        step2_tools.append(search_knowledge_tool)
-        step3_tools.append(search_knowledge_tool)
-
-    if config.source_dirs:
-        list_files_tool = ListFilesTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
-        get_file_content_tool = GetFileContentTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
-        step2_tools.append(list_files_tool)
-        step2_tools.append(get_file_content_tool)
-        step3_tools.append(list_files_tool)
-        step3_tools.append(get_file_content_tool)
-    
-    llm_initialized = False
-    
-    logger.info(f"Chat initialized with {llm_execution.model_desc()} model.")
-    if args.input_dir:
-        logger.info(f"File tools enabled for directory: {args.input_dir}")
-    if embeddings_instance and embeddings_instance.is_loaded():
-        logger.info("Embeddings context search enabled.")
-    logger.info("Type 'exit' to end the conversation.")
-
-    STEP_PROMPTS = {
-        1: f"""Current Step: 1. Please use {search_tool_name} to find knowledge for this user task:
-<user_task>
-{{user_input}}
-</user_task>""",
-        2: f"""Current Step: 2.\nNow, proceed with step 2: Get implementation details by reading the relevant files using the `read_file` tool""",
-        3: f"""Current Step: 3.\nNow, proceed with step 3: Answer the user's original task based on the knowledge and code you have gathered. When you are ready to provide the final answer, use the `final_answer` tool."""
-    }
-
-    STEP_TOOLS = {
-        1: step1_tools,
-        2: step2_tools,
-        3: step3_tools
-    }
-
-    messages: List[BaseMessage] = []
-
-    user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
-    user_input = user_initial_input
-    chat_state = ChatState()
-
-    # User input loop
-    if not llm_initialized:
-        llm_initialized = True
-        llm_execution.on_load()
-    
-    # LLM steps loop
-    try:
-        while True:
-            if chat_state.current_step != chat_state.new_step:
-                # new step is setup
-                chat_state.current_step = chat_state.new_step
-                chat_state.step_change = True
-            
-            if not chat_state.final_answer_provided:
-
-                if chat_state.step_change:
-                    
-                    # add new step message
-                    step_change_message_compact = STEP_PROMPTS[chat_state.current_step].format(user_input=user_initial_input)
-                    chat_state.step_change = False
-                    messages.append(FollowUpMessage(content=step_change_message_compact))
-
-            if chat_state.final_answer_provided:
-                # user input
-                if chat_state.current_step > 1:
-                    user_input = input("\nYou: ").strip()
-                    messages.append(UserMessage(content=user_input))
-
-                if user_input.lower() == 'exit':
-                    print("\nGoodbye!")
-                    break
-                
-                if not user_input:
-                    continue
-
-            # LLM invoke
-            messages_formatted = messages_to_llm_input(messages, chat_state, STEP_TOOLS, args.input_dir or "")
-            print(f"\nAI:")
-            response_content = llm_execution.llm_chat(messages_formatted, verbose=True)
-            
-            response_content_cleaned = clean_thinking_tag(response_content)
-
-            messages.append(AssistantMessage(content=response_content_cleaned))
-
-            matches = find_tool_invocations(response_content_cleaned)
-
-            tool_found_flag = False
-            for match in matches:
-                tool_name = match.group(1).strip()
-                tool_content = match.group(2).strip()
-
-                tools_for_step = STEP_TOOLS[chat_state.current_step]
-                tool_found = next((t for t in tools_for_step if t.name == tool_name), None)
-
-                tool_found_flag = True
-                if tool_found:
-                    param_pattern = r"<(\w+)>(.*?)</\1>"
-                    param_matches = re.findall(param_pattern, tool_content, re.DOTALL)
-                    tool_kwargs = {key.strip(): value.strip() for key, value in param_matches}
-                    tool_kwargs['original_query'] = user_initial_input
-                    
-                    tool_output = tool_found.run(chat_state, **tool_kwargs)
-                    print(f"\nAgent:\n{tool_output}")
-                    logger.info(tool_output)
-                    
-                    tool_message = ToolObservationMessage(content=tool_output, tool_name=tool_name)
-                    messages.append(tool_message)
-                else:
-                    error_message = f"Error: Tool {tool_name} not found for current step {chat_state.current_step}."
-                    tool_message = ToolObservationMessage(content=error_message, tool_name=tool_name, is_error=True)
-                    messages.append(tool_message)
-
-                    logger.error(error_message)
-
-
-            # Prepare result and follow up as a last message
-            
-            # tools messages                  
-            if not tool_found_flag and not chat_state.final_answer_provided:
-                message = FollowUpMessage(f"Error: no tool used! You must use one of the tools available.")
-                messages.append(message)
-
-            # unlocking new tools
-            if chat_state.get_file_used_count >= 1 and not chat_state.finish_unlocked:
-                chat_state.finish_unlocked = True
-                step2_tools.append(final_answer_tool)
-                log_message = "Unlocked finish tool."
-                logger.info(log_message)
-                print(f"\nAgent: \n{log_message}")
-                unlock_message = "Unlocked new tool!\n" + f"# New tool:\n## {final_answer_tool.name}\nDescription: {final_answer_tool.description}\n" 
-                message = UnlockToolMessage(unlock_message)
-                messages.append(message)
-
-            # follow up message if step doesn't change
-            if chat_state.current_step == chat_state.new_step and not chat_state.final_answer_provided:
-                follow_up_content = get_folloup_prompt(chat_state, STEP_TOOLS[chat_state.current_step])
-                if follow_up_content:
-                    message = FollowUpMessage(follow_up_content)
-                    messages.append(message)
-                    logger.info(follow_up_content)
-                    print(f"\nAgent:{follow_up_content}")
+        result = SearchResult(
+                    entry = None,
+                    details = [],
+                    class_description = class_info.class_summary
+                )
         
-    except Exception:
-        logger.exception("Error occurred:")
-
+        chat_state.memory.add_class(class_info.class_summary.full_classname, result, class_info.file, file_size)
 
 def find_tool_invocations(response_content_cleaned):
     tool_pattern = r"<(\w+)>(.*?)</\1>"

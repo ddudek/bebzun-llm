@@ -21,11 +21,3 @@ class ToolObservationMessage(BaseMessage):
 class MemoryMessage(BaseMessage):
     """Represents a follow-up message."""
     pass
-
-class FollowUpMessage(BaseMessage):
-    """Represents a follow-up message."""
-    pass
-
-class UnlockToolMessage(BaseMessage):
-    """Represents a tool unlock message."""
-    pass

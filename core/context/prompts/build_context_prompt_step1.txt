@@ -1,0 +1,46 @@
+Now the first step:
+1. Gather initial knowledge - get knowledge from knowlege store to find classes and files that are relevant to the task.
+                                   
+Project description:
+{project_context}
+
+The search documents look like this:
+
+Example 1 a class summary for `com.example.topic.TopicViewModel.Factory`:
+"Factory interface for creating TopicViewModel instances with the required topicId parameter. It is used by Hilt to inject the ViewModel with the appropriate topic ID when the Topic screen is displayed.
+Used in features:
+ViewModel Dependency Injection
+Topic-Specific Data Handling
+Hilt Integration
+Example questions:
+How does the app ensure that the correct TopicViewModel is instantiated for each specific topic ID?
+What role does the Factory interface play in the ViewModel creation process within the app's architecture?
+How does the assisted factory pattern help in managing dependencies for the TopicViewModel?
+File with implementation: `com/example/topic/TopicViewModelFactory.kt`"
+
+Example 2 individual class property summary for `followableTopics` property in `com.example.news.UserNewsResource`:
+"Property `followableTopics` of a `UserNewsResource` class: List of topics associated with the news resource, each indicating if the user is following them.
+Used in features:
+Bookmarks and saved content
+Topic following and filtering
+Personalized news feeds
+File with implementation: `com/example/news/UserNewsResource.kt`"
+
+Example 3 individual class method summary for `userData` property in `com.example.user.UserDataRepository`:
+"Method `userData` of a `UserDataRepository`: Provides a Flow that emits the current user data.
+Used in features:
+User personalization and theme settings
+Content bookmarking and viewing tracking
+Topic following and notifications
+File with implementation: `com/example/user/UserDataRepository.kt`"
+
+Avoid overly specific code terms unless the query is about code implementation.
+
+Vector Similarity Search: Focus on semantic intent with natural language questions.
+BM25 Search: Focus on exact keywords from features, code names, descriptions.
+
+Please provide:
+- Refined user task, keep all the details.
+- queries for vector similarity search and bm25 search (max 3 for each type) to find relevant code files.
+
+User task: "{user_task}"

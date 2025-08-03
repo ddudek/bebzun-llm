@@ -1,0 +1,33 @@
+Steps 1 and 2 are completed.
+
+Project description:
+{project_context}
+
+Search Results:
+{search_results}
+
+Now the third step:
+3. Summarize results and prepare final answer
+
+Based on the user's task and the provided results, identify if this is the full implementation and prepare final answer.
+
+Please provide either:
+Option1: Get more information: (open files or search content) if the context doesn't seem to be clear and complete, or
+Option2: Final answer: as a summary with code snippets quoted from the code files (do not provide your own code snippets).
+
+Instructions how to format your output:
+Option1: # Get more information:
+Please provide:
+- files_to_open: Additinal files to open, provide a list of "File with implementation". Leave empty list if not needed.
+- additional_search_queries: Search queries with semantic intent with natural language questions to find more class summaries.
+- classes_not_related: List of classes that are completely not related to the user task.
+- final_answer: empty in this "Get more information" result.
+
+Option2: # Final answer
+Please provide:
+- files_to_open: Empty list, e.g. "[]"
+- additional_search_queries: Empty list, e.g. "[]"
+- classes_not_related: List of classes that are completely not related to the user task.
+- final_answer: Your summary of the given files about the user task, with included code snippets quoted from the code files (do not provide your own code snippets).
+
+User task: "{user_task}"

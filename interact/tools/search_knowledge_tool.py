@@ -1,5 +1,5 @@
+import os
 import logging
-from knowledge.embeddings import Embeddings
 from knowledge.knowledge_store import KnowledgeStore
 from interact.chat_state import ChatState
 from core.config.config import Config
@@ -19,10 +19,11 @@ class SearchKnowledgeTool:
                         "</search_knowledge_tool>\n"
                         "```")
     
-    def __init__(self, embeddings: Embeddings, knowledge_store: KnowledgeStore, logger: logging.Logger, config: Config):
+    def __init__(self, input_dir: str, knowledge_store: KnowledgeStore, knowledge_search: KnowledgeSearch, logger: logging.Logger, config: Config):
+        self.input_dir = input_dir
         self.logger = logger
         self.knowledge_store = knowledge_store
-        self.knowledge_search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
+        self.knowledge_search = knowledge_search
 
     def run(self, chat_state: ChatState, query_embeddings: str = "", query_bm25: str = "", original_query: str = "", **kwargs) -> str:
         self.logger.debug(f"Tool invoked:  ({self.name}), embeddings Search query: '{query_embeddings}', BM25 Search query: '{query_bm25}', original query:\n'{original_query}'\n")
@@ -38,7 +39,7 @@ class SearchKnowledgeTool:
             self.logger.error(f"Empty query_embeddings provided")
             return "Error: Please provide both 'query_embeddings' and 'query_bm25'."
         
-        sorted_results = self.knowledge_search.hybrid_search(query_embeddings, query_bm25, limit=20)
+        sorted_results = self.knowledge_search.hybrid_search([query_embeddings], [query_bm25], limit=20)
 
         sorted_results = self.knowledge_search.rerank_results(sorted_results, original_query, rerank_limit = 20)
 
@@ -49,10 +50,9 @@ class SearchKnowledgeTool:
         classes_added_to_memory = []
 
         for i, result in enumerate(sorted_results, 1):
-            item = result.entry
             classname = result.class_description.full_classname
             
-            class_info = self.knowledge_store.get_class_description_extended(classname)
+            class_info = result.class_description
             class_structure = self.knowledge_store.get_class_structure(classname)
             
             if not class_info:
@@ -77,8 +77,11 @@ class SearchKnowledgeTool:
                 score_details = f"Score: {total_score:.2f}"
 
             classes_added_to_memory.append(f"- {classname} ({score_details})")
+
+            abs_file_path = os.path.join(self.input_dir, result.file)
+            file_size = os.path.getsize(abs_file_path)
             
-            chat_state.memory.add_class(classname, result, class_info.file)
+            chat_state.memory.add_search_result(result, result.file, file_size)
 
         chat_state.search_used_count += 1
         observation = f"Observation from {self.name}:\nClasses found and added to the memory:\n" + "\n".join(classes_added_to_memory)

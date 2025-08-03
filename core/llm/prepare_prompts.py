@@ -2,6 +2,7 @@ import os
 from typing import List, Dict
 
 from knowledge.model import ClassDescription, FileInfo
+from knowledge.knowledge_store import KnowledgeStore
 from static_analysis.model.model import ClassStructure
 
 def params_add_list_of_files(prompt_params: Dict, file_infos: List[FileInfo]) -> Dict:
@@ -93,5 +94,17 @@ def params_add_project_context(prompt_params: Dict, input_dir: str) -> Dict:
     
     # Add to prompt_params
     prompt_params["projectcontext"] = projectcontext
+    
+    return prompt_params
+
+def params_add_containing_classes(prompt_params: Dict, rel_path: str, knowledge_store: KnowledgeStore) -> Dict:
+    result = ""
+
+    file_struct = knowledge_store.get_file_structure(rel_path)
+    for cls in file_struct:
+        result += f"- full_classname: `{cls.full_classname}`\n"
+    
+    # Add to prompt_params
+    prompt_params["contain_classes"] = result
     
     return prompt_params
