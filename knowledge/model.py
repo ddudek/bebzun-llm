@@ -67,7 +67,7 @@ class ClassDescriptionExtended(BaseModel):
     class_summary: ClassDescription = Field(description="The class summary output")
     file: str = Field(description="Relative path of the source file")
     file_size: int = Field(description="File size", default=-1)
-    timestamp: int = Field(description="Modification timestamp of the file when the analysis was performed", default=0)
+    version: int = Field(description="Modification timestamp of the file when the analysis was performed", default=0)
 
 
 class FileDescription(BaseModel):
@@ -81,5 +81,5 @@ class FileInfo(BaseModel):
     
     filepath: str = Field(description="Relative path of the file")
     file_size: int = Field(description="Size of the file in bytes")
-    modified_timestamp: datetime = Field(description="Last modification timestamp of the file")
+    version: datetime = Field(description="Last modification timestamp of the file")
     is_allowed_by_filter: bool = Field(description="Whether the file is allowed by the filter", default=True)

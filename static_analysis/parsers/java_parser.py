@@ -75,7 +75,7 @@ class JavaParser(BaseParser):
                 return self._get_node_text(name_node[0])
         return ''
 
-    def extract_classes(self, file_path: Path, input_dir: Path, timestamp: int) -> List[ClassStructure]:
+    def extract_classes(self, file_path: Path, input_dir: Path, version: int) -> List[ClassStructure]:
         """
         Parse a Java source file and extract class information.
         """
@@ -115,7 +115,7 @@ class JavaParser(BaseParser):
                         dependencies=[],
                         public_methods=[],
                         source_file=str(relative_path),
-                        timestamp=timestamp
+                        version=version
                     )
                     classes.append(class_summary)
             

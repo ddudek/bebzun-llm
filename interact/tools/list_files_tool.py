@@ -29,7 +29,7 @@ class ListFilesTool:
                         rel_path = ''
                         
                     for filename in filenames:
-                        if filename.endswith(('.kt', '.java')):
+                        if filename.endswith(('.kt', '.java', '.proto', '.gradle')):
                             file_path = os.path.join(rel_path, filename)
                             files.append(file_path)
             

@@ -7,5 +7,9 @@ class EmbeddingExecution(ABC):
         pass
 
     @abstractmethod
-    def generate_embeddings(self, text: str, vector_dimension: int) -> List[float]:
+    def generate_query_embedding(self, text: str, vector_dimension: int) -> List[float]:
+        pass
+
+    @abstractmethod
+    def generate_documents_embedding(self, texts: List[str], vector_dimension: int) -> List[List[float]]:
         pass

@@ -44,10 +44,11 @@ class OpenAILlmExecution:
 
             raw_response = ""
             for chunk in response:
-                content = chunk.choices[0].delta.content
-                if content:
-                    print(content, end='', flush=True)
-                    raw_response += content
+                if chunk.choices:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        print(content, end='', flush=True)
+                        raw_response += content
 
             print('\n')
             self.logger.debug(f"LLM response: \n{raw_response}")
@@ -80,8 +81,8 @@ class OpenAILlmExecution:
 
             raw_response = ""
             for chunk in response:
-                content = chunk.choices[0].delta.content
-                if content:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
                     if verbose:
                         print(content.replace("\\n","\n"), end='', flush=True)
                     raw_response += content

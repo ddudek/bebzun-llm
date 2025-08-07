@@ -15,7 +15,7 @@ class MlxEmbeddingExecution(EmbeddingExecution):
         self.logger.info(f"Loading embeddings model: {model}...\n")
         self.embedding_model, self.embedding_tokenizer = load_embed_model(model)
 
-    def generate_embeddings(self, text: str, vector_dimension: int) -> List[float]:
+    def _generate_embedding(self, text: str, vector_dimension: int) -> List[float]:
         if self.embedding_model is None or self.embedding_tokenizer is None:
             raise Exception("Embeddings model not initialized")
 
@@ -30,3 +30,9 @@ class MlxEmbeddingExecution(EmbeddingExecution):
             self.logger.warning(f"Warning: Expected embedding dimension {vector_dimension}, got {len(embeddings)}")
         
         return embeddings
+
+    def generate_query_embedding(self, text: str, vector_dimension: int) -> List[float]:
+        return self._generate_embedding("search_query: " + text, vector_dimension)
+
+    def generate_documents_embedding(self, texts: List[str], vector_dimension: int) -> List[List[float]]:
+        return [self._generate_embedding("search_document: " + text, vector_dimension) for text in texts]

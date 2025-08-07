@@ -1,7 +1,58 @@
 import os
-import sys
-import math
 from typing import List, Optional
+from logging import Logger
+from knowledge.model import FileInfo
+
+def get_filtered_files(logger: Logger, input_dir: str, source_dirs: List[str], extensions: tuple = ('.kt', '.java'), name_filter: str = None) -> List[FileInfo]:
+    """
+    Get a list of files with specified extensions from multiple source directories recursively.
+
+    Args:
+        input_dir: The base directory of the project.
+        source_dirs: List of source directories relative to the input_dir.
+        extensions: Tuple of file extensions to filter by.
+        name_filter: Optional string to filter files by name.
+                     If name_filter starts with "!", the filter is inverted.
+
+    Returns:
+        List of FileInfo objects with filepaths relative to input_dir.
+    """
+    file_infos = []
+    
+    invert_filter = False
+    filter_text = name_filter
+    if name_filter and name_filter.startswith("!"):
+        invert_filter = True
+        filter_text = name_filter[1:]
+
+    for src_dir in source_dirs:
+        abs_src_path = os.path.join(input_dir, src_dir)
+        if not os.path.exists(abs_src_path):
+            logger.warning(f"The source directory '{abs_src_path}' does not exist.")
+            continue
+            
+        for root, _, files in os.walk(abs_src_path):
+            for filename in files:
+                if filename.endswith(extensions):
+                    abs_file_path = os.path.join(root, filename)
+                    rel_file_path = os.path.relpath(abs_file_path, input_dir)
+                    file_size = os.path.getsize(abs_file_path)
+                    version = file_size # will be enough for now
+                    
+                    is_allowed = True
+                    if filter_text:
+                        contains_filter = filter_text in filename
+                        is_allowed = not contains_filter if invert_filter else contains_filter
+                    
+                    file_info = FileInfo(
+                        filepath=rel_file_path,
+                        file_size=file_size,
+                        version=version,
+                        is_allowed_by_filter=is_allowed
+                    )
+                    file_infos.append(file_info)
+                    
+    return file_infos
 
 def get_file_content(file_path: str) -> str:
     """

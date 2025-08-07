@@ -72,17 +72,23 @@ class CombinedSearchResults:
     def add_vector_result(self, full_classname: str, score: float):
         if full_classname not in self.results:
             return
-        self.results[full_classname].vector_score += score
+        
+        prev_score = self.results[full_classname].vector_score
+        self.results[full_classname].vector_score = max(prev_score, score)
 
     def add_bm25_result(self, full_classname: str, score: float):
         if full_classname not in self.results:
             return
-        self.results[full_classname].bm25_score += score
+        
+        prev_score = self.results[full_classname].bm25_score
+        self.results[full_classname].bm25_score += max(prev_score, score)
 
     def add_rerank_result(self, full_classname: str, score: float):
         if full_classname not in self.results:
             return
-        self.results[full_classname].rerank_score = +score
+        
+        prev_score = self.results[full_classname].rerank_score
+        self.results[full_classname].rerank_score = max(prev_score, score)
 
     def get_sorted_results(self) -> List[SearchResult]:
         for result in self.results.values():

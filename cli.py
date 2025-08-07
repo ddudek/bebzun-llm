@@ -12,6 +12,7 @@ from knowledge.embeddings_store import Embeddings
 from knowledge.model import MethodDescription, VariableDescription
 from core.search.embedding_entry import EmbeddingEntry
 from core.search.search import KnowledgeSearch
+from core.search.search_result import SearchResult
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
@@ -20,6 +21,7 @@ from core.context.build_context import BuildContext
 from interact.memory.memory import Memory
 from core.utils.file_utils import get_file_content, get_all_files
 from core.utils.logging_utils import setup_logging, setup_llm_logger
+from core.config.config import Config
 
 # Global instances
 llm_execution = None
@@ -34,6 +36,20 @@ def similarity_search(args, config):
     global embeddings, knowledge_store
     search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
     results = search.vector_search_combined(args.query, limit=args.limit)
+
+    
+
+    for res in results:
+        methods = filter(lambda x: isinstance(x, MethodDescription), res.details)
+        properties = filter(lambda x: isinstance(x, VariableDescription), res.details)
+
+        print("""
+        {
+          "full_classname": \"""" + res.full_classname + """\",
+          "properties": [""" + ",".join(["\"" + i.property_name + "\"" for i in properties]) + """],
+          "methods":["""+ ",".join(["\"" + i.method_name + "\"" for i in methods])  + """]
+        },""", end="")
+
     results = search.rerank_results(results, args.query)
     
     output_results = []
@@ -56,7 +72,7 @@ def bm25_search(args, config):
     global embeddings, knowledge_store
     search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
     results = search.bm25_search(args.query, limit=args.limit)
-    results = search.rerank_results(results, args.query)
+    results = search.rerank_results(results, args.query, rerank_limit=args.limit)
     
     output_results = []
     for res in results:
@@ -71,6 +87,43 @@ def bm25_search(args, config):
         })
         
     logger.info(json.dumps(output_results, indent=2))
+
+
+def rerank_bench(args, config: Config):
+    """
+    Performs BM25 search using the knowledge base.
+    """
+    global embeddings, knowledge_store
+    search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
+
+    results: List[SearchResult] = []
+    for i in config.bench_rerank:
+        query = i['query']
+        documents = i['documents']
+        test_results = i['results']
+
+        for doc in documents:
+            full_classname = doc['full_classname']
+            cls = knowledge_store.get_class_description_extended(full_classname)
+            details=[]
+            if cls:
+                if doc['properties']:
+                    for p in doc['properties']:
+                        detail = cls.class_summary.find_property(p)
+                        if detail:
+                            details.append(detail)
+
+                if doc['methods']:
+                    for p in doc['methods']:
+                        detail = cls.class_summary.find_method(p)
+                        if detail:
+                            details.append(detail)
+
+
+                entry = SearchResult(full_classname=full_classname, file=cls.file, details=details, class_description=cls.class_summary)
+                results.append(entry)
+        
+        results = search.rerank_results(results, query, rerank_limit=100)
         
 
 def build_context_command(args, config):
@@ -190,6 +243,10 @@ def main():
     bm25_parser.add_argument('query', help='The search query.')
     bm25_parser.add_argument('--limit', type=int, default=15, help='Number of results to return.')
     bm25_parser.set_defaults(func=bm25_search)
+
+    # BM25 search command
+    rerank_bench_parser = subparsers.add_parser('rerank_bench', help='Perform reranker benchmark')
+    rerank_bench_parser.set_defaults(func=rerank_bench)
 
     # Summarize project command
     summarize_parser = subparsers.add_parser('summarize_project', help='Generate a summary of the entire project.')

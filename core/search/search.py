@@ -185,16 +185,19 @@ class KnowledgeSearch:
 
         sorted_results = combined_results.get_sorted_results()
 
+        for idx, item in enumerate(sorted_results):
+            self.logger.debug(f"{idx}.{item.total_score}: {item.describe_content()}")
+
         return sorted_results
     
-    def rerank_results(self, sorted_results: List[SearchResult], query: str, rerank_limit: int = 20) -> List[SearchResult]:
+    def rerank_results(self, sorted_results: List[SearchResult], query: str, rerank_limit: int = 100) -> List[SearchResult]:
         if self.reranker.isEnabled():
             results = sorted_results[-rerank_limit:]
 
             print("\nReranking...")
             for idx, item in enumerate(results):
                 print(f"{idx}. {item.full_classname}")
-                self.logger.debug(f"{idx}. {item.describe_content()}")
+                self.logger.debug(f"{idx}.{item.total_score}:\n{item.describe_content()}\n")
 
             docs_to_rerank = [res.describe_content() for res in results]
             
@@ -207,9 +210,10 @@ class KnowledgeSearch:
             results = sorted(results, key=lambda x: x.rerank_score, reverse=True)
 
             results_limited = results #[x for x in results if x.rerank_score > 0.0001]
-            print("\n\nResults limited:")
+            print("\nFinal reranking results:")
             for idx, item in enumerate(results_limited):
                 print(f"{idx}. {round(item.rerank_score, 3)}: {item.full_classname}")
+            print("")
 
             return results_limited
 

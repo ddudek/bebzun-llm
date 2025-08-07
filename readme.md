@@ -33,7 +33,7 @@ Maximize LLM context efficiency by providing pre-processed, contextual summaries
     ↓
 [Knowledge Base] → LLM summaries + vector embeddings → db_embeddings.json
     ↓  
-[Retrieval] → Vector similarity search + BM25 (+ needs Reranker 🚧)
+[Retrieval] → Vector similarity search + BM25 + Reranker
     ↓  
 [Interactive Query] → Simple RAG-based chat with pre-processed knowledge
 ```
@@ -158,28 +158,37 @@ In `config.json` specify which directories contain your source code:
 ```
 
 ## 3. Build knowledge
+Create a knowledge database for your project:
+```bash
+python build_knowledge.py -i /path/to/your/project
+```
 
 ### Step 1: Static Analysis
 Analyzes Java and Kotlin source files to extract class structures, methods, and dependencies. Creates `<your-project>/.ai-agent/db_preprocess.json`.
 
+You can also run this step manually by adding `-m Pre` parameter:
 ```bash
-python static_analysis.py -i /path/to/your/project
+python build_knowledge.py -i /path/to/your/project -m Pre
 ```
 
 ### Step 2: Knowledge Building
 Uses LLM to generate summaries of classes and methods with contextual information. Creates `ai-agent/db_final.json` with LLM summaries and embeddings database. This step can take significant amount of time. Macbook M1 Pro with 32GB RAM and using Qwen3-14b, will take 2 days for processing a project with ~1300 files.
 Database is created incrementally, using already processed files as a context for the next ones. After each processed file, output file is updated to avoid loosing progress.
 
+You can also run this step manually by adding `-m Final` parameter:
 ```bash
 python build_knowledge.py -i /path/to/your/project -m Final [-f "MainActivity"]
 ```
 
 ### Step 3: Create embeddings for search
+Creates and stores embeddings for each piece of knowledge.
+
+You can also run this step manually by adding `-m Embedd` parameter:
 ```bash
 python build_knowledge.py -i /path/to/your/project -m Embedd
 ```
 
-### Step 4: Interaction
+### Step 2: Interaction
 The project is ready for interaction:
 
 Chat:

@@ -9,8 +9,8 @@ import time
 import json
 from pathlib import Path
 import os
-from datetime import datetime
-from typing import Dict, List, Set
+import sys
+from typing import List, Set
 
 from static_analysis.core.file_utils import get_all_source_files, get_java_files, get_kotlin_files
 from static_analysis.core.output_formatter import format_dependencies_for_output, format_methods_for_output
@@ -44,13 +44,25 @@ class CodebaseAnalyzer:
         Returns:
             AnalysisOutput object containing the analysis results
         """
+
         print(f"Starting analysis of files in:\n" + "\n".join(source_dirs))
+        
+        source_dirs_absolute = [str(os.path.join(input_dir, src)) for src in source_dirs]
+
         start_time = time.time()
+
+        for source_dir in source_dirs_absolute:
+            if not Path(source_dir).exists():
+                print(f"Warn: Source directory does not exist: {source_dir}")
+                sys.exit(1)
+            if not Path(source_dir).is_dir():
+                print(f"Warn: {source_dir} is not a directory")
+                sys.exit(1)
         
         # Find all source files
         print("Finding source files...")
-        java_files = get_java_files(source_dirs, input_dir)
-        kotlin_files = get_kotlin_files(source_dirs, input_dir)
+        java_files = get_java_files(source_dirs_absolute, input_dir)
+        kotlin_files = get_kotlin_files(source_dirs_absolute, input_dir)
         
         print(f"Found {len(java_files)} Java files and {len(kotlin_files)} Kotlin files.")
         
@@ -73,7 +85,7 @@ class CodebaseAnalyzer:
 
         # Prepare data structure for serialization
         metadata = {
-            "source_directories": [str(Path(s).relative_to(input_dir)) for s in source_dirs],
+            "source_directories": source_dirs,
             "total_classes_analyzed": len(enriched_classes),
             "java_files_analyzed": len(java_files),
             "kotlin_files_analyzed": len(kotlin_files),
@@ -116,14 +128,14 @@ class CodebaseAnalyzer:
         
         # Process Java files
         for file_path in java_files:
-            md_timestamp = int(os.path.getmtime(file_path))
-            classes = self.java_parser.extract_classes(file_path, input_dir, md_timestamp)
+            version = int(os.path.getsize(file_path))
+            classes = self.java_parser.extract_classes(file_path, input_dir, version)
             all_classes.extend(classes)
         
         # Process Kotlin files
         for file_path in kotlin_files:
-            md_timestamp = int(os.path.getmtime(file_path))
-            classes = self.kotlin_parser.extract_classes(file_path, input_dir, md_timestamp)
+            version = int(os.path.getsize(file_path))
+            classes = self.kotlin_parser.extract_classes(file_path, input_dir, version)
             all_classes.extend(classes)
         
         return all_classes

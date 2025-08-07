@@ -20,7 +20,7 @@ class BaseParser(ABC):
     
 
     @abstractmethod
-    def extract_classes(self, file_path: Path, input_dir: Path) -> List[ClassStructure]:
+    def extract_classes(self, file_path: Path, input_dir: Path, version: int) -> List[ClassStructure]:
         """
         Parse a source file and extract class information.
         

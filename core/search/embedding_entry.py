@@ -8,7 +8,7 @@ class EmbeddingEntry:
     full_classname: str
     rel_path: str
     embedding: List[float]
-    timestamp: int
+    version: int
 
     def to_dict(self) -> Dict:
         return asdict(self)

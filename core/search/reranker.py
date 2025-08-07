@@ -8,10 +8,10 @@ class Reranker:
     def __init__(self, config: Config, logger: logging.Logger):
         self.logger = logger
         self.execution = None
-        if config.reranker.model == "experimental-transfrormers-qwen3":
+        if config.reranker.mode == "experimental-transfrormers-qwen3":
             self.execution = RerankerExecutionTransformers(logger)
-        elif config.reranker.model == "llama_rerank":
-            self.execution = RerankerExecutionLlama(logger, config.reranker.url)
+        elif config.reranker.mode == "llama_rerank":
+            self.execution = RerankerExecutionLlama(logger, config.reranker.url, config.reranker.model)
 
     def isEnabled(self) -> bool:
         return self.execution is not None

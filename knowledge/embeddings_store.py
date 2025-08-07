@@ -10,6 +10,7 @@ from core.search.embedding_entry import EmbeddingEntry
 from knowledge.embeddings.embedding_execution import EmbeddingExecution
 from knowledge.embeddings.embedding_execution_mlx import MlxEmbeddingExecution
 from knowledge.embeddings.embedding_execution_ollama import OllamaEmbeddingExecution
+from knowledge.embeddings.embedding_execution_openai import OpenAIEmbeddingExecution
 
 class Embeddings:
     def __init__(self, config: Config, logger: logging.Logger):
@@ -28,7 +29,9 @@ class Embeddings:
         if self.execution_mode == 'mlx':
             self.embedding_execution = MlxEmbeddingExecution(logger=logger)
         elif self.execution_mode == 'ollama':
-            self.embedding_execution = OllamaEmbeddingExecution(logger=logger)
+            self.embedding_execution = OllamaEmbeddingExecution(logger=logger, url=embeddings_config.url)
+        elif self.execution_mode == 'openai':
+            self.embedding_execution = OpenAIEmbeddingExecution(logger=logger, url=embeddings_config.url)
         else:
             raise ValueError(f"Unsupported embeddings execution mode: {self.execution_mode}")
 
@@ -61,9 +64,25 @@ class Embeddings:
         """Check if the embeddings data is loaded"""
         return self.data is not None
 
-    def generate_embeddings(self, text: str) -> List[float]:
+    def generate_documents_embedding(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embeddings using the configured execution method
+        Generate document embeddings using the configured execution method
+        
+        Args:
+            texts: The texts to embed
+            
+        Returns:
+            List of embedding values
+        """
+        try:
+            return self.embedding_execution.generate_documents_embedding(texts, self.vector_dimension)
+        except Exception as e:
+            self.logger.error(f"Error generating document embeddings: {str(e)}")
+            return []
+
+    def generate_query_embedding(self, text: str) -> List[float]:
+        """
+        Generate query embeddings using the configured execution method
         
         Args:
             text: The text to embed
@@ -72,10 +91,10 @@ class Embeddings:
             List of embedding values
         """
         try:
-            return self.embedding_execution.generate_embeddings(text, self.vector_dimension)
+            return self.embedding_execution.generate_query_embedding(text, self.vector_dimension)
         except Exception as e:
-            self.logger.error(f"Error generating embeddings: {str(e)}")
-            return []
+            self.logger.error(f"Error generating query embeddings: {str(e)}")
+            raise
         
     def store_all_classes(self):
         with open(self.storage_path, 'w', encoding='utf-8') as f:
@@ -99,7 +118,7 @@ class Embeddings:
         
         try:
             # Generate embeddings
-            embedding_vector = self.generate_embeddings("search_document: " + text_to_embed)
+            embedding_vector = self.generate_documents_embedding([text_to_embed])[0]
             
             if not embedding_vector:
                 self.logger.error(f"Failed to generate embeddings for {classname}")
@@ -111,7 +130,7 @@ class Embeddings:
                 full_classname=classname,
                 rel_path=rel_path,
                 embedding=embedding_vector,
-                timestamp=timestamp
+                version=timestamp
             )
             key = f"{classname}.{detail}" if type != 'class' else classname
             self.data[key] = entry
@@ -137,7 +156,7 @@ class Embeddings:
                 return []
 
             # Generate embeddings for the query
-            query_embedding = self.generate_embeddings("search_query: " + query)
+            query_embedding = self.generate_query_embedding(query)
             
             if not query_embedding:
                 self.logger.error(f"Failed to generate embeddings for query")
@@ -164,13 +183,16 @@ class Embeddings:
                 sorted_indices = mx.argsort(similarities)[::-1]
 
             results = []
+            entries_log = ""
             for i in range(min(limit, len(sorted_indices))):
                 idx = sorted_indices[i].item()
                 entry: EmbeddingEntry = stored_entries[idx]
                 score = float(similarities[idx].item())
-                
+                entries_log += f"\n{round(score, 3)}: {entry.full_classname}{' [`' + entry.detail+'`]' if entry.detail else ''}"
                 results.append((entry, score))
             
+
+            self.logger.info(f"Query '{query}': found {len(results)} embedding entries: {entries_log}\n")
             return results
 
         except Exception as e:

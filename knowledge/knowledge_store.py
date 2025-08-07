@@ -264,7 +264,6 @@ class KnowledgeStore:
                     print(f"Warning, cannot read file size: {abs_file_path}")
                     continue
 
-                item.file_size = file_size
                 self.descriptions_dict[classname] = item
 
             

@@ -33,7 +33,8 @@ def main():
     parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
     parser.add_argument('--log-file', help='Path to the log file.')
     parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
-    parser.add_argument('-p', '--prompt', help='Initial user prompt.')
+    parser.add_argument('-p', '--prompt', help='User task to generate context.')
+    parser.add_argument('-p1', '--prompt1', help='Initial user prompt.')
 
     args = parser.parse_args()
     
@@ -60,7 +61,7 @@ def main():
         print(f"Connection to Anthropic model: {config.llm.anthropic.model}")
         llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
     elif config.llm.mode == 'openai':
-        logger.info("Initializing connection to OpenAI...")
+        logger.info(f"Initializing connection to {config.llm.openai.url}...")
         llm_execution = OpenAILlmExecution(
             model=config.llm.openai.model,
             temperature=config.llm.openai.temperature,
@@ -138,6 +139,7 @@ def main():
     messages: List[BaseMessage] = []
 
     user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
+    user_first_question = args.prompt1.strip() if args.prompt1 else None
     user_input = user_initial_input
 
     messages.append(UserMessage(content=f"# User task:\n<user_task>\n{user_input}\n</user_task>"))
@@ -158,7 +160,11 @@ def main():
 
             # user input
             if tool_observation_flag == False or tool_used_counter > 3:
-                user_input = input("\nYou: ").strip()
+                if user_first_question:
+                    user_input = user_first_question
+                    user_first_question = None
+                else:
+                    user_input = input("\nYou: ").strip()
 
                 if user_input.lower() == 'exit':
                     print("\nGoodbye!")
@@ -173,6 +179,12 @@ def main():
                         add_class_memory(chat_state, query, input_dir, knowledge)
                     skip_ai = True
 
+                if user_input.startswith('/remove '):
+                    query = user_input[9:]
+                    if query:
+                        remove_class_memory(chat_state, query, input_dir, knowledge)
+                    skip_ai = True
+
                 if user_input.startswith('/del '):
                     count = int(user_input[5:])
                     if count > 0:
@@ -181,11 +193,15 @@ def main():
                     skip_ai = True
 
                 if user_input.startswith('/list'):
-                    print("\n".join(f"- {type(message).__name__}:" + message.content[:30].replace('\n', '') + "..." for message in messages))
+                    print("\n".join(f"- {type(message).__name__}:" + message.content[:60].replace('\n', '') + "..." for message in messages))
                     skip_ai = True
 
                 if user_input.startswith('/memory'):
                     print(f"Memory:\n{chat_state.memory.get_formatted_memory_compact()}")
+                    skip_ai = True
+
+                if user_input.startswith('/memory-full'):
+                    print(f"Memory:\n{chat_state.memory.get_formatted_memory()}")
                     skip_ai = True
                 
                 if not user_input:
@@ -332,7 +348,13 @@ def add_class_memory(chat_state: ChatState, query: str, input_dir: str, knowledg
                     class_description = class_info.class_summary
                 )
         
-        chat_state.memory.add_class(class_info.class_summary.full_classname, result, class_info.file, file_size)
+        chat_state.memory.add_search_result(result, class_info.file, file_size)
+
+def remove_class_memory(chat_state: ChatState, query: str, input_dir: str, knowledge: KnowledgeStore):
+    result = chat_state.memory.remove_class_memory(query)
+    for i in result:
+        print(f"Removed: `{i}`")
+    
 
 def find_tool_invocations(response_content_cleaned):
     tool_pattern = r"<(\w+)>(.*?)</\1>"

@@ -81,7 +81,7 @@ class KotlinParser(BaseParser):
         
         return None
     
-    def extract_classes(self, file_path: Path, input_dir: Path, md_timestamp: int) -> List[ClassStructure]:
+    def extract_classes(self, file_path: Path, input_dir: Path, version: int) -> List[ClassStructure]:
         """
         Parse a Kotlin source file and extract class information.
         
@@ -139,7 +139,7 @@ class KotlinParser(BaseParser):
                     dependencies=[],
                     public_methods=[],
                     source_file=str(relative_path),
-                    timestamp=md_timestamp
+                    version=version
                 )
                 classes.append(class_summary)
             

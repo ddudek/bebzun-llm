@@ -8,7 +8,7 @@ from core.utils.token_utils import tokens_to_chars, chars_to_tokens
 
 from datetime import datetime, timezone
 from core.config.config import load_config
-from core.utils.file_utils import get_file_content, is_binary_file, get_file_content_safe, format_file_size
+from core.utils.file_utils import get_file_content, get_filtered_files, get_file_content_safe, format_file_size
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
@@ -16,8 +16,11 @@ from core.llm.llm_execution_openai import OpenAILlmExecution
 from knowledge.knowledge_store import KnowledgeStore, DepUsage
 from knowledge.model import FileDescription, ClassDescription, ClassDescriptionExtended, FileInfo
 from knowledge.embeddings_store import Embeddings
+from static_analysis.core.analyzer import CodebaseAnalyzer
 from static_analysis.model.model import ClassStructure, ClassStructureDependency
 from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_descriptions, params_add_ignored_packaged, params_add_project_context, params_add_containing_classes
+from core.search.embedding_entry import EmbeddingEntry
+
 
 # Initialize Storage as a global instance
 knowledge_store = KnowledgeStore()
@@ -25,9 +28,13 @@ logger = None
 embeddings = None  # Will be initialized after config is loaded
 config = None
 
-def final_process_file(file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
+file_static_db = "db_preprocess.json"
+file_final_db = "db_final.json"
+file_config = "config.json"
+
+def process_summary_llm(file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
     """
-    Generate a structured summary of the file using Ollama
+    Generate a structured summary of the file
     Returns a FileFinalSummaryOutput object with 'summary' and 'dependencies' fields
     """
     # Skip empty or error content
@@ -70,58 +77,6 @@ def final_process_file(file_path: str, content: str, filecontext: str, prompt_pa
         logger.error(error_msg)
         sys.exit(1)
     
-
-def get_filtered_files(input_dir: str, source_dirs: List[str], extensions: tuple = ('.kt', '.java'), name_filter: str = None) -> List[FileInfo]:
-    """
-    Get a list of files with specified extensions from multiple source directories recursively.
-
-    Args:
-        input_dir: The base directory of the project.
-        source_dirs: List of source directories relative to the input_dir.
-        extensions: Tuple of file extensions to filter by.
-        name_filter: Optional string to filter files by name.
-                     If name_filter starts with "!", the filter is inverted.
-
-    Returns:
-        List of FileInfo objects with filepaths relative to input_dir.
-    """
-    file_infos = []
-    
-    invert_filter = False
-    filter_text = name_filter
-    if name_filter and name_filter.startswith("!"):
-        invert_filter = True
-        filter_text = name_filter[1:]
-
-    for src_dir in source_dirs:
-        abs_src_path = os.path.join(input_dir, src_dir)
-        if not os.path.exists(abs_src_path):
-            logger.warning(f"The source directory '{abs_src_path}' does not exist.")
-            continue
-            
-        for root, _, files in os.walk(abs_src_path):
-            for filename in files:
-                if filename.endswith(extensions):
-                    abs_file_path = os.path.join(root, filename)
-                    rel_file_path = os.path.relpath(abs_file_path, input_dir)
-                    file_size = os.path.getsize(abs_file_path)
-                    mtime = os.path.getmtime(abs_file_path)
-                    modified_timestamp = datetime.fromtimestamp(mtime, tz=timezone.utc)
-                    
-                    is_allowed = True
-                    if filter_text:
-                        contains_filter = filter_text in filename
-                        is_allowed = not contains_filter if invert_filter else contains_filter
-                    
-                    file_info = FileInfo(
-                        filepath=rel_file_path,
-                        file_size=file_size,
-                        modified_timestamp=modified_timestamp,
-                        is_allowed_by_filter=is_allowed
-                    )
-                    file_infos.append(file_info)
-                    
-    return file_infos
 
 def format_prompt(prompt_params: dict, prompt_template: str, filename, fileext, content):
     return prompt_template.format(
@@ -172,7 +127,7 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
 
 
 
-def llm_final_process_file(rel_path: str, dependency_files: set,
+def process_summary_for_file(rel_path: str, path_final_db: str,
                                 prompt_params: Dict, prompt_templates: Dict, base_dir: str,
                                 processed_counter: int, total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
     """
@@ -261,7 +216,7 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
     
     # Generate summary
     logger.info(f"[{processed_counter}/{total_files}] File: {rel_path}")
-    summary = final_process_file(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
+    summary = process_summary_llm(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
     
     # Process results
     # Update processed counter
@@ -276,7 +231,8 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
     # Print progress
     logger.info(logg_info)
     
-    md_timestamp = int(os.path.getmtime(abs_file_path))
+    file_size = os.path.getsize(abs_file_path)
+    version = file_size
     # Process and save results
     for classs in summary.classes:
         
@@ -284,7 +240,8 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
         storage_obj = ClassDescriptionExtended(
             class_summary=classs,
             file=rel_path,
-            timestamp=md_timestamp
+            file_size=file_size,
+            version=version,
         )
         
         # Add to collection
@@ -292,16 +249,17 @@ def llm_final_process_file(rel_path: str, dependency_files: set,
         knowledge_store.save_class_description(storage_obj)
     
     # Save after file processed
-    knowledge_store.dump_write_storage_final(f"{base_dir}/.ai-agent/db_final.json")
+    knowledge_store.dump_write_storage_final(path_final_db)
     
     # Periodically report progress
     logger.info(f"Progress: {processed_counter}/{total_files} files processed")
 
-def final_process(
+def process_summaries_for_files(
         file_infos: List[FileInfo], 
         prompt_params: Dict, 
         prompt_templates: Dict, 
-        base_dir: str = None,
+        base_dir: str,
+        path_final_db: str,
         is_filtering_enabled: bool = False, 
         is_force = True,
         is_update_only = False
@@ -339,6 +297,7 @@ def final_process(
 
     only_missing = not is_force
     log_message_files = ""
+
     for file in files_to_process_pre:
         file_path = file[0]
         file_priority = file[1]
@@ -367,12 +326,12 @@ def final_process(
         if is_update_only and file_to_process:
             allowed = False
             classes_in_file = knowledge_store.get_file_structure(file_path)
-            if not classes_in_file or not old_classes:
+            if classes_in_file and not old_classes:
                 allowed = True
 
             for cl in classes_in_file:
                 old_description = knowledge_store.get_class_description_extended(cl.full_classname)
-                if old_description and old_description.timestamp != cl.timestamp:
+                if old_description and old_description.version != cl.version:
                     allowed = True
 
             if not allowed:
@@ -397,8 +356,8 @@ def final_process(
         dependency_files_with_priority_single = get_dependency_files(rel_path, {})
         dependency_files = set(df for df, _ in dependency_files_with_priority_single)
         
-        llm_final_process_file(rel_path,
-                               dependency_files,
+        process_summary_for_file(rel_path,
+                               path_final_db,
                                prompt_params, prompt_templates, base_dir,
                                processed_counter, total_files, all_class_summaries)
         
@@ -409,89 +368,126 @@ def final_process(
     # Return the collected summaries
     return all_class_summaries
 
-def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project_context: str = None) -> None:
+def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project_context: str = None, is_update: bool = False) -> None:
     """
     Process embeddings for all classes in storage.final_process
-    
-    Args:
-        file_infos: List of FileInfo objects (containing filepath, file_size, and modified_timestamp)
-        base_dir: Base directory (needed for file operations)
-        project_context: The project context string
     """
-    embeddings.initialize(base_dir, create=True)
+    embeddings.initialize(base_dir, create=(not is_update))
 
     total_classes = len(knowledge_store.descriptions_dict)
     logger.info(f"Processing {total_classes} classes for embeddings")
     logger.info("Generating embeddings...")
     
-    processed = 0
+    embedding_entries_to_process: List[EmbeddingEntry] = []
+    documents_to_embed: List[str] = []
 
-    # Iterate through each class in storage.final_process
-    for classname, class_storage in knowledge_store.descriptions_dict.items():
-        processed += 1
-        rel_path = class_storage.file
-        
-        logger.info(f"[{processed}/{total_classes}] Processing class: {classname}")
-        
-        # Get dependencies directly from class_storage.class_summary.dependencies
-        # filecontext: str = f"{project_context}\n" if project_context else ""
-        filecontext: str = ""
+    # 1. Create a list with EmbeddingEntry elements first with empty embeddings array
+    # and a parallel list of documents to embed
+    for classname, class_summary_extended in knowledge_store.descriptions_dict.items():
+        rel_path = class_summary_extended.file
+        class_summary = class_summary_extended.class_summary
+        class_structure = knowledge_store.get_class_structure(classname)
 
-        # Get dependencies from the class summary
-        class_summary = class_storage.class_summary
-        class_preprocess = knowledge_store.get_class_structure(class_summary.full_classname)
+        # delete missing entries
+        old_key = class_summary.full_classname
+        if is_update and not class_structure and old_key in embeddings.data:
+            to_remove_keys = []
+            for i in embeddings.data.keys():
+                if old_key in i:
+                    to_remove_keys.append(i)
 
-        only_class = False
+            for key in to_remove_keys:
+                del embeddings.data[key]
+            continue
 
+        # Class embedding
+        filecontext_class: str = ""
         if class_summary.features:
-            filecontext += "Used in features:\n"
+            filecontext_class += "Used in features:\n"
             for feature in class_summary.features:
-                filecontext += f"{feature}\n"
-
+                filecontext_class += f"{feature}\n"
         if class_summary.questions:
-            filecontext += "Example questions:\n"
+            filecontext_class += "Example questions:\n"
             for question in class_summary.questions:
-                filecontext += f"{question}\n"
+                filecontext_class += f"{question}\n"
         
-        # Generate embeddings and store with embeddings.store_embeddings
-        logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
-        embedd_summary = f"{class_summary.summary}"
+        summary_class = f"{class_summary.summary}"
+        text_to_embed = f"{summary_class}\n{filecontext_class}" if filecontext_class else summary_class
+
+        embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
+
+        old_key = class_summary.full_classname
+        if is_update and old_key in embeddings.data and embeddings.data[old_key].version == embedding_version:
+            continue
         
-        embeddings.store_class_description_embeddings('class', class_summary.full_classname, '', embedd_summary, filecontext, rel_path, class_storage.timestamp)
+        documents_to_embed.append(text_to_embed)
+        embedding_entries_to_process.append(EmbeddingEntry(
+            type='class',
+            detail='',
+            full_classname=class_summary.full_classname,
+            rel_path=rel_path,
+            embedding=[], # empty for now
+            version=embedding_version
+        ))
 
-        if not only_class:
-            for method in class_summary.methods:
-                filecontext: str = ""
-                if class_summary.features:
-                    filecontext += "Used in features:\n"
-                    for feature in class_summary.features:
-                        filecontext += f"{feature}\n"
+        # Method embeddings
+        for method in class_summary.methods:
+            filecontext_method: str = ""
+            if class_summary.features:
+                filecontext_method += "Used in features:\n"
+                for feature in class_summary.features:
+                    filecontext_method += f"{feature}\n"
+            
+            summary_method = f"Method `{method.method_name}` of a `{class_summary.simple_classname}`: {method.method_summary}"
+            text_to_embed = f"{summary_method}\n{filecontext_method}" if filecontext_method else summary_method
+            embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
+            documents_to_embed.append(text_to_embed)
+            embedding_entries_to_process.append(EmbeddingEntry(
+                type='method',
+                detail=method.method_name,
+                full_classname=class_summary.full_classname,
+                rel_path=rel_path,
+                embedding=[], # empty for now
+                version=embedding_version
+            ))
 
-                # Generate embeddings and store with embeddings.store_embeddings
-                logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
-                embedd_summary = f"Method `{method.method_name}` of a `{class_summary.simple_classname}`: {method.method_summary}"
-                
-                embeddings.store_class_description_embeddings('method', class_summary.full_classname, method.method_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
+        # Property embeddings
+        for property in class_summary.properties:
+            filecontext_property: str = ""
+            if class_summary.features:
+                filecontext_property += "Used in features:\n"
+                for feature in class_summary.features:
+                    filecontext_property += f"{feature}\n"
 
-            for property in class_summary.properties:
-                filecontext: str = ""
-                if class_summary.features:
-                    filecontext += "Used in features:\n"
-                    for feature in class_summary.features:
-                        filecontext += f"{feature}\n"
+            summary_property = f"Property `{property.property_name}` of a `{class_summary.simple_classname}` class: {property.property_summary}"
+            text_to_embed = f"{summary_property}\n{filecontext_property}" if filecontext_property else summary_property
+            embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
+            documents_to_embed.append(text_to_embed)
+            embedding_entries_to_process.append(EmbeddingEntry(
+                type='property',
+                detail=property.property_name,
+                full_classname=class_summary.full_classname,
+                rel_path=rel_path,
+                embedding=[], # empty for now
+                version=embedding_version
+            ))
 
-                # Generate embeddings and store with embeddings.store_embeddings
-                logger.info(f"  Storing embeddings for class: {class_summary.full_classname}")
-                embedd_summary = f"Property `{property.property_name}` of a `{class_summary.simple_classname}` class: {property.property_summary}"
-                
-                embeddings.store_class_description_embeddings('property', class_summary.full_classname, property.property_name, embedd_summary, filecontext, rel_path, class_storage.timestamp)
+    if documents_to_embed:
+        # Generate embeddings in batch
+        embedding_vectors = embeddings.generate_documents_embedding(documents_to_embed)
         
-        # Print progress
-        if processed % 10 == 0:
-            logger.info(f"Progress: {processed}/{total_classes} classes processed")
+        # 3. assign embedding vectors from the result to the output list
+        for i, entry in enumerate(embedding_entries_to_process):
+            key = f"{entry.full_classname}.{entry.detail}" if entry.type != 'class' else entry.full_classname
+
+            entry.embedding = embedding_vectors[i]
+            embeddings.data[key] = entry
 
     # Save to file
     embeddings.store_all_classes()
+
+def calc_embedd_version(class_storage, text_to_embed):
+    return class_storage.version + len(text_to_embed)
 
 llm_execution = None
 
@@ -521,13 +517,16 @@ def main():
     llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
 
     # Determine input directory    
-    input_dir = os.path.abspath(args.input_dir)
+    base_dir = os.path.abspath(args.input_dir)
     
+    path_config = os.path.join(base_dir, ".ai-agent", file_config)
+    path_static_db = os.path.join(base_dir, ".ai-agent", file_static_db)
+    path_final_db = os.path.join(base_dir, ".ai-agent", file_final_db)
+
     # Load configuration
     global config
-    config_file_path = os.path.join(input_dir, ".ai-agent", f"config.json")
-    config = load_config(config_file_path)
-    
+    config = load_config(path_config)
+
     # Initialize LLM execution
     global llm_execution, embeddings
     if config.llm.mode == 'mlx':
@@ -540,7 +539,7 @@ def main():
         logger.info("Initializing connection to Anthropic...")
         llm_execution = AnthropicLlmExecution(model=config.llm.anthropic.model, key=config.llm.anthropic.key, logger=llm_logger)
     elif config.llm.mode == 'openai':
-        logger.info("Initializing connection to OpenAI...")
+        logger.info(f"Initializing connection to {config.llm.openai.url}")
         llm_execution = OpenAILlmExecution(
             model=config.llm.openai.model,
             temperature=config.llm.openai.temperature,
@@ -560,7 +559,7 @@ def main():
     mode = args.mode  # Can be None if not specified
     
     # Get file information with optional filter
-    filtered_file_infos = get_filtered_files(input_dir, config.source_dirs, extensions=('.kt', '.java'), name_filter=args.filter)
+    filtered_file_infos = get_filtered_files(logger, base_dir, config.source_dirs, extensions=('.kt', '.java'), name_filter=args.filter)
     
     is_filtering_enabled = args.filter != None
 
@@ -593,59 +592,65 @@ def main():
     prompt_params = params_add_field_descriptions(prompt_params)
     prompt_params = params_add_ignored_packaged(prompt_params)
     prompt_params = params_add_list_of_files(prompt_params, filtered_file_infos)
-    prompt_params = params_add_project_context(prompt_params, input_dir)
-    
+    prompt_params = params_add_project_context(prompt_params, base_dir)
+
+    is_update_only = args.update
+    is_force = args.force 
+
     # Determine which processes to run based on mode
-    run_pre_process = mode == 'Pre'
-    run_final_process = mode is None or mode == 'Final'
-    run_embeddings = mode is None or mode == 'Embedd'
+    run_pre_process = mode is None or mode == 'Pre'  or is_update_only
+    run_final_process = mode is None or mode == 'Final' or is_update_only
+    run_embeddings = mode is None or mode == 'Embedd' or is_update_only or is_force
 
     if run_final_process:
         llm_execution.on_load()
         
     # Pre-processing step with TreeSitter
     if run_pre_process:
-        logger.error("=== Error, pre-process not implemented in this version ===")
+        # Create analyzer and run analysis
+        analyzer = CodebaseAnalyzer(verbose=args.log_level == 'DEBUG')
+        analyzer.analyze_codebase(config.source_dirs, str(base_dir), path_static_db)
+        knowledge_store.read_storage_pre_process(path_static_db)
 
     if not run_pre_process and (run_final_process or run_embeddings):
         # If we're not running pre-process but need the data for later steps
         logger.info("=== Loading pre-processed data from storage ===")
-        knowledge_store.read_storage_pre_process(f"{input_dir}/.ai-agent/db_preprocess.json")
+        knowledge_store.read_storage_pre_process(path_static_db)
 
     # Final processing step
     if run_final_process:
         logger.info("=== Running Final processing ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json", input_dir)
+        knowledge_store.read_storage_final(path_final_db, base_dir)
 
-        is_force = args.force 
-        is_update_only = args.update
 
         # Process with memory and get all class summaries
-        class_summaries_final = final_process(
+        class_summaries_final = process_summaries_for_files(
             filtered_file_infos, 
             prompt_params, 
             prompt_templates, 
-            base_dir=input_dir, 
-            is_filtering_enabled=is_filtering_enabled, 
+            base_dir, 
+            path_final_db = path_final_db,
+            is_filtering_enabled = is_filtering_enabled, 
             is_force=is_force, 
-            is_update_only=is_update_only)
+            is_update_only = is_update_only)
         
         # Save all class summaries to storage at once
         logger.info(f"Saving {len(class_summaries_final)} class summaries with memory to storage...")
         for classs in class_summaries_final:
             knowledge_store.save_class_description(classs)
 
-        knowledge_store.dump_write_storage_final(f"{input_dir}/.ai-agent/db_final.json")
+        knowledge_store.dump_write_storage_final(path_final_db)
 
     if run_embeddings and not run_final_process:
         # If we're only running embeddings and not final process, we need to load final data
         logger.info("=== Loading final processed data from storage ===")
-        knowledge_store.read_storage_final(f"{input_dir}/.ai-agent/db_final.json", input_dir)
+        knowledge_store.read_storage_final(path_final_db, base_dir)
 
     # Embeddings processing step
     if run_embeddings:
         logger.info("=== Running Embeddings processing ===")
-        process_embeddings(filtered_file_infos, base_dir=input_dir, project_context=prompt_params["projectcontext"])
+        is_update = is_update_only or is_filtering_enabled
+        process_embeddings(filtered_file_infos, base_dir=base_dir, project_context=prompt_params["projectcontext"], is_update = is_update)
 
     logger.info("\nSummary generation complete!")
 

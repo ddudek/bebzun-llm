@@ -25,7 +25,8 @@ class OpenAIConfig(BaseModel):
 class EmbeddingsConfig(BaseModel):
     model: str = "nomic-embed-text"
     vector_dimension: int = 768
-    execution: Literal['mlx', 'ollama'] = 'ollama'
+    execution: Literal['mlx', 'ollama', 'openai'] = 'ollama'
+    url: str = "https://localhost:8080/v1"
 
 class LlmConfig(BaseModel):
     mode: Literal['mlx', 'ollama', 'anthropic', 'openai']
@@ -38,7 +39,8 @@ class LlmConfig(BaseModel):
     min_context: int = Field(default=0)
 
 class RerankerConfig(BaseModel):
-    model: Literal["none", "experimental-transfrormers-qwen3", "llama_rerank"] = "none"
+    mode: Literal["none", "experimental-transfrormers-qwen3", "llama_rerank"] = "none"
+    model: str = "bge-reranker-v2-m3"
     url: str = "http://127.0.0.1:8012/v1/rerank"
 
 class Config(BaseModel):
@@ -46,6 +48,8 @@ class Config(BaseModel):
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     llm: LlmConfig
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    bench_rerank: List[dict] = Field(default=[])
+    bench_embedd: List[dict] = Field(default=[])
 
 def load_config(path: str = "config.json") -> Config:
     if not os.path.exists(path):

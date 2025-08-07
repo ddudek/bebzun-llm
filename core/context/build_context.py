@@ -78,12 +78,12 @@ class BuildContext:
         self._execute_searches(step1_result.similarity_search_queries, step1_result.bm25_search_queries, step1_result.user_task_refined)
 
         # Step 2: Use search results, review and get files with real implementation
-        self._step2_get_and_review_files(user_task, step1_result.user_task_refined, project_context, system_prompt)
+        step2_result = self._step2_get_and_review_files(user_task, step1_result.user_task_refined, project_context, system_prompt)
 
         # Step 3: Review files and remove unwanted memory items
-        result = self._step3_summarize_and_final(user_task, step1_result.user_task_refined, project_context, system_prompt)
+        result = self._step3_summarize_and_final(user_task, step1_result.user_task_refined, project_context, system_prompt, step2_result.classes_not_related)
         
-        print("--- Build context finished. ---")
+        print(f"--- Build context finished. ---\n{self.memory.get_formatted_memory_compact()}")
         return result
 
     def _step1_generate_search_queries(self, user_task: str, project_context: str, system_prompt: str) -> BuildContextQueriesLLMResult:
@@ -155,7 +155,7 @@ class BuildContext:
 
         self.logger.info(f"Found {len(reranked_results)} relevant results after reranking.")
 
-    def _step2_get_and_review_files(self, user_task: str, user_task_refined: str, project_context: str, system_prompt: str):
+    def _step2_get_and_review_files(self, user_task: str, user_task_refined: str, project_context: str, system_prompt: str) -> BuildContextGetFilesLLMResult:
         self.logger.info("Step 2: Reviewing search results and getting files...")
 
         prompt_template_path = Path(__file__).parent / "prompts" / "build_context_prompt_step2.txt"
@@ -175,49 +175,29 @@ class BuildContext:
                 prompt=prompt,
                 schema=schema
             )
-            get_files_result = BuildContextGetFilesLLMResult.model_validate(llm_response)
-            self.logger.info(f"LLM decided to open files: {get_files_result.files_to_open}")
+            step2_result = BuildContextGetFilesLLMResult.model_validate(llm_response)
+            self.logger.info(f"LLM decided to open files: {step2_result.files_to_open}")
 
-            for file_path in get_files_result.files_to_open:
-                self._add_file_to_memory(file_path)
-
-            similarity_search_queries = get_files_result.additional_search_queries
+            similarity_search_queries = step2_result.additional_search_queries
             bm25_search_queries = []
             if similarity_search_queries:
                 self._execute_searches(similarity_search_queries, bm25_search_queries, user_task_refined)
 
-            for file_path in get_files_result.files_to_open:
-                self.logger.info(f"Adding classes related to `{file_path}`")
-                to_add: List[ClassDescriptionExtended] = []
-                to_add.extend([cls.parent_description for cls in self.knowledge_store.get_file_usages(file_path).values()])
-                # to_add.extend([cls.dependency_description for cls in self.knowledge_store.get_file_dependencies(file_path).values()])
-
-                for class_info in to_add:
-                    if class_info and class_info.class_summary:
-                        classname = class_info.class_summary.full_classname
-                        self.logger.info(f"Adding class summary: {classname}")
-
-                        abs_file_path = os.path.join(self.input_dir, class_info.file)
-                        file_size = os.path.getsize(abs_file_path)
-                    
-                        search_result = SearchResult(
-                            full_classname=classname,
-                            file=class_info.file,
-                            details=[],
-                            class_description=class_info.class_summary,
-                        )
-
-                        self.memory.add_search_result(search_result, class_info.file, file_size)
-
+            for file_path in step2_result.files_to_open:
+                self._add_file_to_memory(file_path)
             
-            for cls_name in get_files_result.classes_not_related:
+            to_remove = step2_result.classes_not_related
+            for cls_name in to_remove:
+                self.logger.info(f"Removing `{cls_name}`")
                 self.memory.remove_class_memory(cls_name)
+
+            return step2_result
 
         except Exception as e:
             self.logger.error(f"Error during LLM invocation in Step 2: {e}", exc_info=True)
             raise
 
-    def _step3_summarize_and_final(self, user_task: str, user_task_refined: str, project_context: str, system_prompt: str) -> str:
+    def _step3_summarize_and_final(self, user_task: str, user_task_refined: str, project_context: str, system_prompt: str, previous_to_remove: List[str]) -> str:
         self.logger.info("Step 3: Finalize...")
 
         prompt_template_path = Path(__file__).parent / "prompts" / "build_context_prompt_step3.txt"
@@ -239,27 +219,31 @@ class BuildContext:
             )
             llm_result = BuildContextStep3.model_validate(llm_response)
 
-            if llm_result.final_answer and (llm_result.additional_search_queries or llm_result.files_to_open):
+            if llm_result.finish_summary and (llm_result.additional_search_queries or llm_result.files_to_open):
                 self.logger.warning("Error: Both final answer and more information is provided")
-
-            for file_path in llm_result.files_to_open:
-                self._add_file_to_memory(file_path)
 
             similarity_search_queries = llm_result.additional_search_queries
             bm25_search_queries = []
             if similarity_search_queries:
                 self._execute_searches(similarity_search_queries, bm25_search_queries, user_task_refined)
+            
+            for file_path in llm_result.files_to_open:
+                self._add_file_to_memory(file_path)
 
-            for cls_name in llm_result.classes_not_related:
+            to_remove = llm_result.classes_not_related.copy()
+            to_remove.extend(previous_to_remove)
+            for cls_name in to_remove:
                 print(f"Removing: `{cls_name}`")
                 self.memory.remove_class_memory(cls_name)
                 cls_desc = self.knowledge_store.find_class_description_extended(cls_name)
+
+            for cls_name in llm_result.classes_not_related:
                 if cls_desc and cls_desc.file:
+                    self.logger.info(f"Removing file `{cls_name}`")
                     self.memory.remove_file_memory(cls_desc.file)
 
-            if llm_result.final_answer:
-                print("--- LLM Final Answer: ---")
-                return llm_result.final_answer
+            if llm_result.finish_summary:
+                return self.memory.get_formatted_memory() + f"\n\nSummary: \n{llm_result.finish_summary}"
 
         except Exception as e:
             self.logger.error(f"Error during LLM invocation in Step 2: {e}", exc_info=True)
