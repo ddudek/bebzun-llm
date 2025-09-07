@@ -5,6 +5,7 @@ import json
 import logging
 import sys
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 from core.config.config import load_config
 from core.llm.llm_execution_openai import OpenAILlmExecution
@@ -34,7 +35,8 @@ def main():
     parser.add_argument('--log-file', help='Path to the log file.')
     parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
     parser.add_argument('-p', '--prompt', help='User task to generate context.')
-    parser.add_argument('-p1', '--prompt1', help='Initial user prompt.')
+    parser.add_argument('-ss', '--single-shot', help='User prompt for single shot answer.')
+    parser.add_argument('-o', '--output', help='Output file for single-shot answer')
 
     args = parser.parse_args()
     
@@ -139,7 +141,9 @@ def main():
     messages: List[BaseMessage] = []
 
     user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
-    user_first_question = args.prompt1.strip() if args.prompt1 else None
+    user_single_shot_question = args.single_shot.strip() if args.single_shot else None
+    file_output = Path(args.output) if args.output else None
+
     user_input = user_initial_input
 
     messages.append(UserMessage(content=f"# User task:\n<user_task>\n{user_input}\n</user_task>"))
@@ -160,9 +164,9 @@ def main():
 
             # user input
             if tool_observation_flag == False or tool_used_counter > 3:
-                if user_first_question:
-                    user_input = user_first_question
-                    user_first_question = None
+                if user_single_shot_question:
+                    user_input = user_single_shot_question
+                    user_single_shot_question = None
                 else:
                     user_input = input("\nYou: ").strip()
 
@@ -256,6 +260,17 @@ def main():
                     messages.append(tool_message)
 
                     logger.error(error_message)
+
+            if file_output and tool_observation_flag == False or tool_used_counter > 3:
+                # use response_content_cleaned and save to file_output
+                file_output.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with open(file_output, 'w', encoding='utf-8') as f:
+                        f.write(response_content_cleaned)
+                except Exception:
+                    sys.exit(1)
+                    
+                sys.exit(0)
 
     except Exception:
         logger.exception("Error occurred:")
