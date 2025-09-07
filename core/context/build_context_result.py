@@ -23,5 +23,5 @@ class BuildContextStep3(BaseModel):
     
     files_to_open: List[str] = Field(description="List of file paths to open")
     additional_search_queries: List[str] = Field(description="List of additional queries to find more classes")
-    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task")
     finish_summary: str = Field(description="Summary of the finished result")
+    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task")

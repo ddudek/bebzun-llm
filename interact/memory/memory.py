@@ -138,7 +138,7 @@ class Memory:
                 file_path = item.rel_path
                 file_size = item.file_size
                 file_info = f"\nFile with implementation: `{file_path}` (size: {chars_to_tokens(file_size)} tokens)"
-                raw_content = f"Item #{idx}: Class summary for: {class_fullname}:{file_info}\n{class_summary}\n"
+                raw_content = f"Item #{idx}: Class summary for: {class_fullname}:{file_info}\n{class_summary}\n\n"
                 other_files_already_covered.add(file_path)
             
             if isinstance(item, MemoryItemFullFile):
@@ -155,7 +155,7 @@ class Memory:
                     if i.parent_description:
                         other_files.add(i.parent_description.file)
                 
-            memory_content += raw_content    
+            memory_content += raw_content
 
             memory_size += len(raw_content)
 
@@ -164,7 +164,7 @@ class Memory:
             files = list(other_files - other_files_already_covered)
             files.sort(key=lambda x: x, reverse=True)
             other_files_formatted = "\n".join(files) 
-            memory_content += "Other files:\n" + other_files_formatted + "\n\n"
+            memory_content += "Other existing files:\n" + other_files_formatted + "\n\n"
 
             memory_size += len(other_files_formatted)
         

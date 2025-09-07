@@ -5,25 +5,6 @@ from knowledge.model import ClassDescription, FileInfo
 from knowledge.knowledge_store import KnowledgeStore
 from static_analysis.model.model import ClassStructure
 
-def params_add_list_of_files(prompt_params: Dict, file_infos: List[FileInfo]) -> Dict:
-    """
-    Format the list_of_files string and add it to prompt_params
-    
-    Args:
-        file_infos: List of FileInfo objects
-        prompt_params: The parameters dictionary to update
-        
-    Returns:
-        Updated prompt_params dictionary with list_of_files_str
-    """
-    # Format the list of files string
-    list_of_files_str = "\n".join([f"{file_info.filepath}" for file_info in file_infos])
-    
-    # Add to prompt_params
-    prompt_params["list_of_files"] = list_of_files_str
-    
-    return prompt_params
-
 def params_add_field_descriptions(prompt_params: Dict) -> Dict:
     """
     Generate field descriptions for both models and add them to prompt_params
@@ -68,19 +49,7 @@ def params_add_ignored_packaged(prompt_params: Dict) -> Dict:
     
     return prompt_params
 
-
-def params_add_project_context(prompt_params: Dict, input_dir: str) -> Dict:
-    """
-    Add project context to prompt_params
-    
-    Args:
-        prompt_params: The parameters dictionary to update
-        input_dir: Input directory path
-        
-    Returns:
-        Updated prompt_params dictionary with project context
-    """
-    # Define the path to the project context file
+def params_get_project_context(input_dir):
     project_context_path = os.path.join(input_dir, ".ai-agent", "project_context.txt")
     
     # Check if the file exists
@@ -91,11 +60,7 @@ def params_add_project_context(prompt_params: Dict, input_dir: str) -> Dict:
     else:
         # Fallback to empty string if file doesn't exist
         projectcontext = ""
-    
-    # Add to prompt_params
-    prompt_params["projectcontext"] = projectcontext
-    
-    return prompt_params
+    return projectcontext
 
 def params_add_containing_classes(prompt_params: Dict, rel_path: str, knowledge_store: KnowledgeStore) -> Dict:
     result = ""

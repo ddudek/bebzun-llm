@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, Tuple
 from interact.memory.memory import Memory
 from interact.chat_state import ChatState
+from core.utils.file_manager import FileManager
 
 class GetFileContentTool:
     name: str = "read_file"
@@ -19,10 +20,11 @@ class GetFileContentTool:
         "```"
         )
     
-    def __init__(self, base_path: str, source_dirs: list[str], logger: logging.Logger):
+    def __init__(self, base_path: str, source_dirs: list[str], logger: logging.Logger, file_manager: FileManager):
         self.logger = logger
         self.base_path = base_path
         self.source_dirs = [os.path.normpath(d) for d in source_dirs]
+        self.file_manager = file_manager
     
     def run(self, chat_state: ChatState, path: str = "", **kwargs) -> str:
         """
@@ -50,19 +52,13 @@ class GetFileContentTool:
             full_path = os.path.normpath(os.path.join(self.base_path, path))
             
             # Security check: ensure the requested path is within one of the allowed source directories
-            abs_path = os.path.abspath(full_path)
-            is_allowed = False
-            for src_dir in self.source_dirs:
-                abs_src_dir = os.path.abspath(os.path.join(self.base_path, src_dir))
-                if abs_path.startswith(abs_src_dir):
-                    is_allowed = True
-                    break
+            is_allowed = self.file_manager.is_allowed(self.base_path, path)
             
             if not is_allowed:
                 self.logger.error(f"Safety check failed: Path is not within allowed source directories")
                 return f"Error: Cannot access path outside of the allowed source directories. Please use a relative path from one of: {self.source_dirs}"
             
-            if not os.path.exists(full_path):
+            if not os.path.exists(full_path) or self.file_manager.is_excluded(path):
                 self.logger.error(f"Path does not exist: '{full_path}'")
                 return f"Error: The file '{path}' does not exist within the base directory."
                 

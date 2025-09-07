@@ -8,7 +8,8 @@ from core.utils.token_utils import tokens_to_chars, chars_to_tokens
 
 from datetime import datetime, timezone
 from core.config.config import load_config
-from core.utils.file_utils import get_file_content, get_filtered_files, get_file_content_safe, format_file_size
+from core.utils.file_utils import get_file_content, get_file_content_safe
+from core.utils.file_manager import FileManager
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
@@ -18,12 +19,13 @@ from knowledge.model import FileDescription, ClassDescription, ClassDescriptionE
 from knowledge.embeddings_store import Embeddings
 from static_analysis.core.analyzer import CodebaseAnalyzer
 from static_analysis.model.model import ClassStructure, ClassStructureDependency
-from core.llm.prepare_prompts import params_add_list_of_files, params_add_field_descriptions, params_add_ignored_packaged, params_add_project_context, params_add_containing_classes
+from core.llm.prepare_prompts import params_add_field_descriptions, params_add_ignored_packaged, params_get_project_context, params_add_containing_classes
 from core.search.embedding_entry import EmbeddingEntry
 
 
 # Initialize Storage as a global instance
 knowledge_store = KnowledgeStore()
+file_manager = FileManager()
 logger = None
 embeddings = None  # Will be initialized after config is loaded
 config = None
@@ -32,7 +34,13 @@ file_static_db = "db_preprocess.json"
 file_final_db = "db_final.json"
 file_config = "config.json"
 
-def process_summary_llm(file_path: str, content: str, filecontext: str, prompt_params: Dict, prompt_templates: Dict, base_dir: str = None) -> FileDescription:
+def process_summary_llm(
+        file_path: str, 
+        content: str, 
+        filecontext: str, 
+        prompt_params: Dict, 
+        prompt_templates: Dict
+    ) -> FileDescription:
     """
     Generate a structured summary of the file
     Returns a FileFinalSummaryOutput object with 'summary' and 'dependencies' fields
@@ -47,9 +55,6 @@ def process_summary_llm(file_path: str, content: str, filecontext: str, prompt_p
     # Get the file extension and relative filepath
     _, file_extension = os.path.splitext(file_path)
     
-    # Format the list of files with tags
-    list_of_files_txt = f"```{prompt_params['list_of_files']}\n```"
-    
     try:
         system_prompt = prompt_templates["system_prompt_template"]
         prompt = prompt_templates["final_prompt_template"].format(
@@ -57,7 +62,6 @@ def process_summary_llm(file_path: str, content: str, filecontext: str, prompt_p
                 file_extension = " " + file_extension if file_extension else "",
                 filename = "File name: " + file_path,
                 content = "File content:\n```\n" + content + "```\n",
-                list_of_files = list_of_files_txt,
                 ignore_packages = prompt_params["ignore_packages"],
                 contain_classes = prompt_params["contain_classes"],
                 projectcontext = prompt_params["projectcontext"],
@@ -127,16 +131,20 @@ def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) ->
 
 
 
-def process_summary_for_file(rel_path: str, path_final_db: str,
-                                prompt_params: Dict, prompt_templates: Dict, base_dir: str,
-                                processed_counter: int, total_files: int, all_class_summaries: List[ClassDescriptionExtended]) -> None:
+def process_summary_for_file(rel_path: str, 
+                             path_final_db: str,
+                             prompt_params: Dict,
+                             prompt_templates: Dict,
+                             base_dir: str,
+                             processed_counter: int,
+                             total_files: int,
+                             all_class_summaries: List[ClassDescriptionExtended]
+    ) -> None:
     """
     Process a file for final LLM processing and update shared data
     
     Args:
         rel_path: Relative path of the file
-        file_memory: Memory information for the file from cache
-        dependency_files: Set of dependency files
         prompt_params: Parameters for the prompts
         prompt_templates: The prompt templates to use
         base_dir: Base directory (needed for file operations)
@@ -216,7 +224,7 @@ def process_summary_for_file(rel_path: str, path_final_db: str,
     
     # Generate summary
     logger.info(f"[{processed_counter}/{total_files}] File: {rel_path}")
-    summary = process_summary_llm(rel_path, content, filecontext, prompt_params, prompt_templates, base_dir)
+    summary = process_summary_llm(rel_path, content, filecontext, prompt_params, prompt_templates)
     
     # Process results
     # Update processed counter
@@ -255,12 +263,10 @@ def process_summary_for_file(rel_path: str, path_final_db: str,
     logger.info(f"Progress: {processed_counter}/{total_files} files processed")
 
 def process_summaries_for_files(
-        file_infos: List[FileInfo], 
         prompt_params: Dict, 
         prompt_templates: Dict, 
         base_dir: str,
         path_final_db: str,
-        is_filtering_enabled: bool = False, 
         is_force = True,
         is_update_only = False
         ) -> List[ClassDescriptionExtended]:
@@ -275,12 +281,12 @@ def process_summaries_for_files(
         base_dir: Base directory (needed for file operations)
     """
     # Build a dependency graph for all files
-    file_info_map = {f.filepath: f for f in file_infos}
+    file_info_map = {f.filepath: f for f in file_manager.file_infos}
     dependency_files_with_priority = {}
     
     include_dependencies_first = True
     # First, collect all dependencies for each file
-    for file_info in file_infos:
+    for file_info in file_manager.file_infos:
         if file_info.is_allowed_by_filter:
             rel_path = file_info.filepath
             dependency_files_with_priority[rel_path] = 0
@@ -301,6 +307,9 @@ def process_summaries_for_files(
     for file in files_to_process_pre:
         file_path = file[0]
         file_priority = file[1]
+        if file_path not in file_info_map:
+            continue
+        
         file_info = file_info_map[file_path]
 
         old_classes = knowledge_store.get_file_description(file_path)
@@ -310,7 +319,7 @@ def process_summaries_for_files(
         is_missing_classes = len(classes_in_file) > len(old_classes)
 
         file_to_process = None
-        if is_filtering_enabled:
+        if file_manager.is_filtering_enabled:
             if only_missing:
                 if is_missing_classes and file_info.is_allowed_by_filter:
                     file_to_process = file_info
@@ -350,6 +359,8 @@ def process_summaries_for_files(
     logger.info(f"Processing {total_files} files for final summary (including dependencies)")
     logger.info("Generating summaries with context...")
 
+    prompt_params["projectcontext"] = params_get_project_context(base_dir)
+
     for i, file_info in enumerate(files_to_process):
         rel_path = file_info.filepath
         
@@ -368,7 +379,7 @@ def process_summaries_for_files(
     # Return the collected summaries
     return all_class_summaries
 
-def process_embeddings(file_infos: List[FileInfo], base_dir: str = None, project_context: str = None, is_update: bool = False) -> None:
+def process_embeddings(base_dir: str = None, is_update: bool = False) -> None:
     """
     Process embeddings for all classes in storage.final_process
     """
@@ -559,19 +570,10 @@ def main():
     mode = args.mode  # Can be None if not specified
     
     # Get file information with optional filter
-    filtered_file_infos = get_filtered_files(logger, base_dir, config.source_dirs, extensions=('.kt', '.java'), name_filter=args.filter)
-    
-    is_filtering_enabled = args.filter != None
+    file_manager.load(logger, base_dir, config, name_filter=args.filter)
 
     # Print out the filtered files with sizes
-    logger.info("Filtered files found:")
-    for i, file_info in enumerate(filtered_file_infos, 1):
-        formatted_size = format_file_size(file_info.file_size)
-        status = "[WILL PROCESS]" if file_info.is_allowed_by_filter else "[FILTERED OUT]"
-        logger.info(f"{i}. {file_info.filepath} ({formatted_size}) {status}")
-    
-    allowed_count = sum(1 for f in filtered_file_infos if f.is_allowed_by_filter)
-    logger.info(f"Total: {len(filtered_file_infos)} files found, {allowed_count} match filter")
+    file_manager.print_files_info(logger)
 
     # Load prompt templates for final processing
     final_prompt_path = os.path.join(script_dir, 'knowledge', 'prompts', 'final_proccess_prompt.txt')
@@ -591,8 +593,6 @@ def main():
     # Add params
     prompt_params = params_add_field_descriptions(prompt_params)
     prompt_params = params_add_ignored_packaged(prompt_params)
-    prompt_params = params_add_list_of_files(prompt_params, filtered_file_infos)
-    prompt_params = params_add_project_context(prompt_params, base_dir)
 
     is_update_only = args.update
     is_force = args.force 
@@ -625,12 +625,10 @@ def main():
 
         # Process with memory and get all class summaries
         class_summaries_final = process_summaries_for_files(
-            filtered_file_infos, 
             prompt_params, 
             prompt_templates, 
             base_dir, 
             path_final_db = path_final_db,
-            is_filtering_enabled = is_filtering_enabled, 
             is_force=is_force, 
             is_update_only = is_update_only)
         
@@ -649,8 +647,8 @@ def main():
     # Embeddings processing step
     if run_embeddings:
         logger.info("=== Running Embeddings processing ===")
-        is_update = is_update_only or is_filtering_enabled
-        process_embeddings(filtered_file_infos, base_dir=base_dir, project_context=prompt_params["projectcontext"], is_update = is_update)
+        is_update = is_update_only or file_manager.is_filtering_enabled
+        process_embeddings(base_dir=base_dir, is_update = is_update)
 
     logger.info("\nSummary generation complete!")
 

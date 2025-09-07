@@ -19,7 +19,8 @@ from core.llm.llm_execution_ollama import OllamaLlmExecution
 from core.llm.llm_execution_openai import OpenAILlmExecution
 from core.context.build_context import BuildContext
 from interact.memory.memory import Memory
-from core.utils.file_utils import get_file_content, get_all_files
+from core.utils.file_utils import get_file_content
+from core.utils.file_manager import FileManager
 from core.utils.logging_utils import setup_logging, setup_llm_logger
 from core.config.config import Config
 
@@ -161,19 +162,17 @@ def summarize_project(args, config):
     global llm_execution, knowledge_store
     logger.info("Generating project summary...")
 
+    file_manager = FileManager()
+    file_manager.load(logger, args.input_dir, config, None)
+
     # 1. Load project context
     project_context_path = os.path.join(args.input_dir, ".ai-agent", "project_context.txt")
     project_context = ""
     if os.path.exists(project_context_path):
         project_context = get_file_content(project_context_path)
 
-    # 2. Get all files filtered
-    all_files = get_all_files(
-        args.input_dir, 
-        config.source_dirs, 
-        ignored_dirs={'.ai-agent', '.ai-agent-bak', '.git', '__pycache__', '.idea', 'build', 'gradle'},
-        ignored_files={'.DS_Store'}
-    )
+    # 2. Get all files
+    all_files = file_manager.list_all_files(base_dir=args.input_dir)
     
     # 3. Get all class summaries, interating by each file
     file_entries = []

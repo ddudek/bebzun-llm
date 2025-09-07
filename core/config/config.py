@@ -45,6 +45,8 @@ class RerankerConfig(BaseModel):
 
 class Config(BaseModel):
     source_dirs: List[str]
+    file_extensions: tuple[str] = Field(default=('.kt', '.java'))
+    exclude: List[str] = Field(default=['.DS_Store', '.ai-agent', '.ai-agent-bak', '.git', '__pycache__', '.idea', 'build', 'gradle'])
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     llm: LlmConfig
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)

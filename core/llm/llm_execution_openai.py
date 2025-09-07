@@ -9,6 +9,7 @@ class OpenAILlmExecution:
         self.logger = logger
         self.model = model
         self.temperature = temperature
+        self.base_url = base_url
         self.client = OpenAI(api_key=key, base_url=base_url)
 
     def on_load(self):
@@ -56,7 +57,7 @@ class OpenAILlmExecution:
             return json.loads(raw_response)
         except Exception as e:
             print('\n')
-            self.logger.error(f"Error calling OpenAI API: {e}")
+            self.logger.error(f"Error calling llm ({self.base_url}): {e}")
             raise
 
     def llm_chat(self, messages: List[Dict[str, str]], temperature: float = 0.7, verbose=False) -> str:
@@ -93,5 +94,5 @@ class OpenAILlmExecution:
             self.logger.debug(f"LLM chat response: {raw_response}")
             return raw_response
         except Exception as e:
-            self.logger.error(f"Error during OpenAI chat: {e}")
+            self.logger.error(f"Error during llm invocation ({self.base_url}): {e}")
             raise

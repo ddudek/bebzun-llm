@@ -31,7 +31,7 @@ Option2: "Finish summary"
 Please provide:
 - files_to_open: Empty list, e.g. "[]"
 - additional_search_queries: Empty list, e.g. "[]"
-- classes_not_related: List of classes in memory that are completely not related to the user task (important!).
 - finish_summary: Your summary of the given files about the user task. Explain why is this enough to finish the task. Include code snippets quoted from the code files (do not provide your own code snippets).
+- classes_not_related: List of classes in memory that are completely not related to the user task (important!).
 
 User task: "{user_task}"

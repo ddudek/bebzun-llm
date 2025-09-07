@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from core.config.config import load_config
+from core.utils.file_manager import FileManager
 from core.llm.llm_execution_openai import OpenAILlmExecution
 from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
@@ -16,7 +17,7 @@ from knowledge.embeddings_store import Embeddings
 from knowledge.knowledge_store import KnowledgeStore
 from core.search.search import KnowledgeSearch, SearchResult
 from knowledge.model import ClassDescription
-from core.llm.prepare_prompts import params_add_project_context
+from core.llm.prepare_prompts import params_get_project_context
 from interact.memory.memory import Memory
 from interact.tools.list_files_tool import ListFilesTool
 from interact.tools.get_file_content_tool import GetFileContentTool
@@ -75,6 +76,9 @@ def main():
         raise ValueError(f"Unsupported LLM mode: {config.llm.mode}")
     
     llm_execution.on_load()
+
+    file_manager = FileManager()
+    file_manager.load(logger=logger, base_dir=input_dir, config=config, name_filter=None)
     
     embeddings_instance = None
     try:
@@ -125,7 +129,7 @@ def main():
 
     if config.source_dirs:
         list_files_tool = ListFilesTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
-        get_file_content_tool = GetFileContentTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger)
+        get_file_content_tool = GetFileContentTool(base_path=input_dir, source_dirs=config.source_dirs, logger=logger, file_manager=file_manager)
         step3_tools.append(list_files_tool)
         step3_tools.append(get_file_content_tool)
     
@@ -266,10 +270,11 @@ def main():
                 file_output.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     with open(file_output, 'w', encoding='utf-8') as f:
-                        f.write(response_content_cleaned)
+                        memory = chat_state.memory.get_formatted_memory_compact()
+                        f.write(f"{response_content_cleaned}\n\n*** Response generated with this context: ***\n{memory}")
                 except Exception:
                     sys.exit(1)
-                    
+
                 sys.exit(0)
 
     except Exception:
@@ -278,14 +283,13 @@ def main():
 
 def get_system_prompt(tools: List[Any], input_dir: str) -> str:
     tools_description = "\n".join([f"## {t.name}\nDescription: {t.description}\n" for t in tools])
-    prompt_params = params_add_project_context(prompt_params={}, input_dir=input_dir)
     
     prompt_path = os.path.join("interact", "chat", "system_prompt.txt")
     
     with open(prompt_path, "r") as f:
         prompt_template = f.read()
         
-    project_context_val = prompt_params.get('projectcontext', '')
+    project_context_val = params_get_project_context(input_dir)
 
     return prompt_template.format(
         project_context=project_context_val,
