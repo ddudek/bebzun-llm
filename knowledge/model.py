@@ -11,6 +11,11 @@ class MethodDescription(BaseModel):
             for prop in schema.get('properties', {}).values():
                 prop.pop('title', None)
 
+    def getName(self) -> str:
+        return self.method_name
+    
+    def getSummary(self) -> str:
+        return self.method_summary
 class VariableDescription(BaseModel):
     property_name: str = Field(description="Name of the variable")
     property_summary: str = Field(description="Explanation of what this variable is and how it behaves. If the variable is modified inside the class, please provide at least 2 sentences how it's being changed.")
@@ -19,6 +24,12 @@ class VariableDescription(BaseModel):
         def json_schema_extra(schema: dict[str, any], model: type['VariableDescription']) -> None:
             for prop in schema.get('properties', {}).values():
                 prop.pop('title', None)
+
+    def getName(self) -> str:
+        return self.property_name
+    
+    def getSummary(self) -> str:
+        return self.property_summary
 
 class ClassDescription(BaseModel):
     """Summary of the class"""

@@ -36,11 +36,12 @@ File with implementation: `com/example/user/UserDataRepository.kt`"
 
 Avoid overly specific code terms unless the query is about code implementation.
 
-Vector Similarity Search: Focus on semantic intent with natural language questions. Use full sentences.
-BM25 Search: Focus on exact keywords from features, code names, descriptions.
+Vector Similarity Search: Focus on semantic intent with natural language senctences or questions. Use full sentences. Use it to find general knowledge which files/classes/properties/methods are responsible for a given topic.
+BM25 Search: Focus on exact keywords from features, code names, descriptions. Use this if you want to ask for a particular classname or a property/method.
 
 Please provide:
 - Refined user task, keep all the details (translate to english if needed).
-- queries for vector similarity search and bm25 search (max 3 for each type) to find relevant code files (english only).
+- Check if the task needs splitting into smaller search areas, provide search queries for each area. Required one or more.
+- queries for vector similarity search and bm25 search (max 3 for each type) to find relevant code files (english only), for each area.
 
 User task: "{user_task}"

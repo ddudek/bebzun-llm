@@ -66,7 +66,7 @@ class FileManager:
         abs_path = os.path.abspath(full_path)
         is_allowed = False
         for src_dir in self.source_dirs:
-            abs_src_dir = os.path.abspath(os.path.join(self.base_path, src_dir))
+            abs_src_dir = os.path.abspath(os.path.join(self.base_dir, src_dir))
             if abs_path.startswith(abs_src_dir) and not self.is_excluded(rel_path):
                 is_allowed = True          
                 break

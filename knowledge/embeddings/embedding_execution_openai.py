@@ -30,7 +30,12 @@ class OpenAIEmbeddingExecution(EmbeddingExecution):
         return embedding
 
     def generate_query_embedding(self, text: str, vector_dimension: int) -> List[float]:
-        return self._generate_embedding("search_query: " + text, vector_dimension)
+        query = text
+        
+        if "nomic" in self.embedding_model:
+            query = "search_query: " + text
+
+        return self._generate_embedding(query, vector_dimension)
 
     def generate_documents_embedding(self, texts: List[str], vector_dimension: int) -> List[List[float]]:
         if not self.embedding_model:

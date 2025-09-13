@@ -10,7 +10,7 @@ from core.llm.llm_execution_anthropic import AnthropicLlmExecution
 from core.llm.llm_execution_mlx import MlxLlmExecution
 from core.llm.llm_execution_ollama import OllamaLlmExecution
 from core.llm.llm_execution_openai import OpenAILlmExecution
-from core.context.build_context_result import BuildContextQueriesLLMResult, BuildContextGetFilesLLMResult, BuildContextStep3
+from core.context.build_context_result import BuildContextQueriesLLMResult, BuildContextGetFilesLLMResult, BuildContextStep3, AffectedArea
 from core.search.search import KnowledgeSearch
 from core.search.search_result import SearchResult
 from interact.memory.memory import Memory, MemoryItemClassSummary
@@ -75,7 +75,8 @@ class BuildContext:
         
         # Step 1: Generate search queries from user task
         step1_result = self._step1_generate_search_queries(user_task, project_context, system_prompt)
-        self._execute_searches(step1_result.similarity_search_queries, step1_result.bm25_search_queries, step1_result.user_task_refined)
+        for area in step1_result.affected_areas:
+            self._execute_searches_area(area, step1_result.user_task_refined)
 
         # Step 2: Use search results, review and get files with real implementation
         step2_result = self._step2_get_and_review_files(user_task, step1_result.user_task_refined, project_context, system_prompt)
@@ -115,6 +116,10 @@ class BuildContext:
             self.logger.error(f"Error during LLM invocation in Step 1: {e}", exc_info=True)
             raise
 
+    def _execute_searches_area(self, area: AffectedArea, user_task_refined: str):
+        rerank_query = f"{user_task_refined}\nSubtask: {area.affected_area_summary}"
+        self._execute_searches(area.similarity_search_queries, area.bm25_search_queries, user_task_refined)
+
     def _execute_searches(self, similarity_search_queries: List[str], bm25_search_queries: List[str], user_task: str):
         """
         Step 1: Execute the generated search queries and rerank the results.
@@ -125,14 +130,15 @@ class BuildContext:
         sorted_results = self.knowledge_search.hybrid_search(
             query_embeddings=similarity_search_queries,
             query_bm25=bm25_search_queries,
-            limit=30
+            limit=20
         )
 
         # Rerank the results based on the original user task
         reranked_results = self.knowledge_search.rerank_results(
             sorted_results,
             user_task,
-            rerank_limit=50
+            rerank_limit=50,
+            rerank_result_limit=15
         )
 
         search_results = reranked_results
@@ -178,10 +184,9 @@ class BuildContext:
             step2_result = BuildContextGetFilesLLMResult.model_validate(llm_response)
             self.logger.info(f"LLM decided to open files: {step2_result.files_to_open}")
 
-            similarity_search_queries = step2_result.additional_search_queries
-            bm25_search_queries = []
-            if similarity_search_queries:
-                self._execute_searches(similarity_search_queries, bm25_search_queries, user_task_refined)
+            additional_search = step2_result.additional_search_area
+            if additional_search:
+                self._execute_searches_area(additional_search, user_task_refined)
 
             for file_path in step2_result.files_to_open:
                 self._add_file_to_memory(file_path)
@@ -219,13 +224,12 @@ class BuildContext:
             )
             llm_result = BuildContextStep3.model_validate(llm_response)
 
-            if llm_result.finish_summary and (llm_result.additional_search_queries or llm_result.files_to_open):
+            if llm_result.finish_summary and (llm_result.additional_search_area or llm_result.files_to_open):
                 self.logger.warning("Error: Both final answer and more information is provided")
 
-            similarity_search_queries = llm_result.additional_search_queries
-            bm25_search_queries = []
-            if similarity_search_queries:
-                self._execute_searches(similarity_search_queries, bm25_search_queries, user_task_refined)
+            additional_search = llm_result.additional_search_area
+            if additional_search:
+                self._execute_searches_area(additional_search, user_task_refined)
             
             for file_path in llm_result.files_to_open:
                 self._add_file_to_memory(file_path)

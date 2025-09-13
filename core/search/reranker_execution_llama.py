@@ -14,7 +14,7 @@ class RerankerExecutionLlama:
 
         query_for_model = query
 
-        documents_final = [d.replace('\'', '').replace("\"","").replace("`","") for d in documents]
+        documents_final = [d.replace('\'', '\\\'').replace("\"","\\\"") for d in documents]
     
         json_doc = {
                 "query": query_for_model,
@@ -23,7 +23,7 @@ class RerankerExecutionLlama:
                 "documents": documents_final,
             }
         data = json.dumps(json_doc, indent=2)
-        self.logger.debug(f"Reranking request: {data}")
+        self.logger.debug(f"\nReranking request:\n{data}")
         response = requests.post(
             self.url,
             data=data,

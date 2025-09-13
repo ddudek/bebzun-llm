@@ -8,6 +8,7 @@ class OllamaEmbeddingExecution(EmbeddingExecution):
         self.logger = logger
         self.embedding_model = None
         self.client = ollama.Client(host=url)
+        self.logger.info(f"Initializing ollama embeddings at: {url}")
 
     def init_embeddings(self, model: str):
         self.embedding_model = model
@@ -31,7 +32,12 @@ class OllamaEmbeddingExecution(EmbeddingExecution):
         return embeddings
 
     def generate_query_embedding(self, text: str, vector_dimension: int) -> List[float]:
-        return self._generate_embedding("search_query: " + text, vector_dimension)
+        query = text
+        
+        if "nomic" in self.embedding_model:
+            query = "search_query: " + text
+
+        return self._generate_embedding(query, vector_dimension)
 
     def generate_documents_embedding(self, texts: List[str], vector_dimension: int) -> List[List[float]]:
         return [self._generate_embedding(text, vector_dimension) for text in texts]

@@ -14,15 +14,21 @@ class SearchResult:
     rerank_score: float = 0.0
     total_score: float = 0.0
 
+    def describe_content_rerank(self) -> str:
+        return self.describe_content()
+
     def describe_content(self) -> str:
         content = f"{self.class_description.summary}"
         for detail in self.details:
             if isinstance(detail, MethodDescription):
-                content += f"\n Method: `{detail.method_name}`: {detail.method_summary}"
+                content += f"\n{self.class_description.simple_classname} contains method: `{detail.method_name}`: {detail.method_summary}."
             if isinstance(detail, VariableDescription):
-                content += f"\n Property: `{detail.property_name}`: {detail.property_summary}"
+                content += f"\n{self.class_description.simple_classname} contains property: `{detail.property_name}`: {detail.property_summary}."
         return content
     
+    def describe_content_compact(self) -> str:
+        details = ",".join(['`'+detail.getName()+'`' for detail in self.details])
+        return f"{self.full_classname}" + (f" [{details}]" if details else "")
 
     def add_detail_embedding(self, item: EmbeddingEntry, class_info: ClassDescription):        
         self.add_detail(item.full_classname, item.type, item.detail, class_info)
@@ -51,6 +57,28 @@ class SearchResult:
                 self.add_detail(self.full_classname, "method", detail.method_name, self.class_description)
             if isinstance(detail, VariableDescription):
                 self.add_detail(self.full_classname, "property", detail.property_name, self.class_description)
+
+    def calculate_total_score(self):
+        self.total_score = self.vector_score + self.bm25_score
+        # if both searches found the same result, average it, but with a small advantage
+        if self.vector_score > 0.1 and self.bm25_score > 0.1:
+            self.total_score = max(self.vector_score, self.bm25_score, (self.vector_score + self.bm25_score) * 0.55)
+
+    def is_better_or_equal(self, existing_result:"SearchResult"):
+        is_existing_better_or_equal = False
+        if existing_result.full_classname == self.full_classname:
+            if len(self.details) == 0:
+                is_existing_better_or_equal = True
+            elif len(self.details) > 0 and len(existing_result.details) >= len(self.details):
+                contains_all_details = True
+                for detail in self.details:
+                    if detail.getName() not in [detail.getName() for detail in existing_result.details]:
+                        contains_all_details = False
+                if contains_all_details:
+                    is_existing_better_or_equal = True
+            else:
+                is_existing_better_or_equal = True
+        return is_existing_better_or_equal
 
 @dataclass
 class CombinedSearchResults:

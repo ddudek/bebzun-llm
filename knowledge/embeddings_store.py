@@ -78,7 +78,7 @@ class Embeddings:
             return self.embedding_execution.generate_documents_embedding(texts, self.vector_dimension)
         except Exception as e:
             self.logger.error(f"Error generating document embeddings: {str(e)}")
-            return []
+            raise
 
     def generate_query_embedding(self, text: str) -> List[float]:
         """
@@ -91,7 +91,8 @@ class Embeddings:
             List of embedding values
         """
         try:
-            return self.embedding_execution.generate_query_embedding(text, self.vector_dimension)
+            query_text = f"Implementation of a class, property or method related to this query: {text}"
+            return self.embedding_execution.generate_query_embedding(query_text, self.vector_dimension)
         except Exception as e:
             self.logger.error(f"Error generating query embeddings: {str(e)}")
             raise
@@ -188,16 +189,15 @@ class Embeddings:
                 idx = sorted_indices[i].item()
                 entry: EmbeddingEntry = stored_entries[idx]
                 score = float(similarities[idx].item())
-                entries_log += f"\n{round(score, 3)}: {entry.full_classname}{' [`' + entry.detail+'`]' if entry.detail else ''}"
+                entries_log += f"\n{i}. {round(score, 3)}: {entry.full_classname}{' [`' + entry.detail+'`]' if entry.detail else ''}"
                 results.append((entry, score))
             
-
-            self.logger.info(f"Query '{query}': found {len(results)} embedding entries: {entries_log}\n")
+            self.logger.debug(f"Query '{query}': found {len(results)} embedding entries: {entries_log}\n")
             return results
 
         except Exception as e:
             self.logger.error(f"Error searching for similar documents: {str(e)}")
-            return []
+            raise
 
     def get_all_documents(self) -> Dict[str, EmbeddingEntry]:
         """

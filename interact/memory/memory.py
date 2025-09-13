@@ -181,7 +181,7 @@ class Memory:
 
         for idx, item in enumerate(self.items):
             if  isinstance(item, MemoryItemClassSummary):
-                raw_content = f"- Item #{idx}: Class summary: `{item.class_name}`"
+                raw_content = f"- Item #{idx}: Class summary: `{item.search_result.describe_content_compact()}`"
             
             if isinstance(item, MemoryItemFullFile):
                 raw_content = f"- Item #{idx}: Full file: `{item.file_path}` ({chars_to_tokens(len(item.file_content))} tk + {chars_to_tokens(len(item.file_context))} tk context)"

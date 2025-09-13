@@ -38,8 +38,6 @@ def similarity_search(args, config):
     search = KnowledgeSearch(embeddings, knowledge_store, config, logger)
     results = search.vector_search_combined(args.query, limit=args.limit)
 
-    
-
     for res in results:
         methods = filter(lambda x: isinstance(x, MethodDescription), res.details)
         properties = filter(lambda x: isinstance(x, VariableDescription), res.details)

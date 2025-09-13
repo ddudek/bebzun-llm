@@ -2,7 +2,7 @@ from rank_bm25 import BM25Okapi
 from knowledge.embeddings_store import Embeddings
 from core.search.embedding_entry import EmbeddingEntry
 from knowledge.knowledge_store import KnowledgeStore
-from knowledge.model import ClassDescription
+from knowledge.model import ClassDescription, VariableDescription
 from typing import List, Dict
 from core.config.config import Config
 from core.search.reranker import Reranker
@@ -25,7 +25,7 @@ class KnowledgeSearch:
                 print (f"Warn: no description found for embedding entry: {doc.full_classname}")
                 continue
 
-            summary = self._get_document_summary(doc, class_info)
+            summary = self._get_document_summary_bm25(doc, class_info)
             corpus_for_bm25.append(summary.lower())
             documents.append(doc)
 
@@ -33,7 +33,7 @@ class KnowledgeSearch:
         self.tokenized_corpus = [text.split() for text in corpus_for_bm25]
         self.bm25 = BM25Okapi(self.tokenized_corpus)
 
-    def _get_document_summary(self, item: EmbeddingEntry, class_info: ClassDescription) -> str:
+    def _get_document_summary_bm25(self, item: EmbeddingEntry, class_info: ClassDescription) -> str:
         summary = ""
 
         if item.type == 'class':
@@ -42,14 +42,14 @@ class KnowledgeSearch:
         if item.type == 'method':
             if class_info:
                 detail = class_info.find_method(item.detail)
-                summary = f"Class {class_info.summary}\n"
+                summary = f"Class {class_info.full_classname}\n"
                 if detail:
                     summary += f"Method: `{detail.method_name}`: {detail.method_summary}"
 
         if item.type == 'property':
             if class_info:
                 detail = class_info.find_property(item.detail)
-                summary = f"Class {class_info.summary}\n"
+                summary = f"Class {class_info.full_classname}\n"
                 if detail:
                     summary += f"Method: `{detail.property_name}`: {detail.property_summary}"
         
@@ -115,16 +115,16 @@ class KnowledgeSearch:
         tokenized_query = query_bm25.lower().split()
         doc_scores = self.bm25.get_scores(tokenized_query)
         
-        max_bm25_score = max(doc_scores) if any(doc_scores) else 0.0
+        max_bm25_score = float(max(doc_scores) if any(doc_scores) else 0.0)
         
         if max_bm25_score > 0:
-            normalized_scores = [score / max_bm25_score for score in doc_scores]
+            normalized_scores = [float(score) / max_bm25_score for score in doc_scores]
         else:
             normalized_scores = [0.0] * len(doc_scores)
         
         bm25_results: List[SearchResult] = []
         for i, score in enumerate(normalized_scores):
-            if score > 0 and i < len(self.embedding_entries):
+            if score > 0.2 and i < len(self.embedding_entries):
                 item = self.embedding_entries[i]
 
                 class_info = self.knowledge_store.get_class_description(item.full_classname)
@@ -141,8 +141,15 @@ class KnowledgeSearch:
                 )
                 search_result.add_detail_embedding(item, class_info)
                 bm25_results.append(search_result)
-        
-        return sorted(bm25_results, key=lambda x: x.bm25_score, reverse=True)[:limit]
+                
+        entries_log = ""
+        result = sorted(bm25_results, key=lambda x: x.bm25_score, reverse=True)[:limit]
+        for idx, search_result in enumerate(result):
+            entries_log += f"\n{idx}. {round(search_result.bm25_score, 3)}: {search_result.describe_content_compact()}"
+
+        self.logger.debug(f"Query '{query_bm25}'(BM25) found {len(result)} entries: {entries_log}\n")
+
+        return result
     
 
     def bm25_search_combined(self, query: str, limit: int = 10) -> List[SearchResult]:
@@ -164,42 +171,157 @@ class KnowledgeSearch:
     def hybrid_search(self, query_embeddings: List[str], query_bm25: List[str], limit: int = 15) -> List[SearchResult]:
         vector_results: List[SearchResult] = []
         for query in query_embeddings:
-            vector_results.extend(self.vector_search(query, limit))
+            search_result = self.vector_search(query, limit)
+
+            # This tries to squash similar results together.
+            # Nearby results which are similar should be safe to process later together.
+            squashed_search_result = self.squash_nearby_results(search_result)
+            if self.logger.level == logging.DEBUG:
+                print(f"After squashing:")
+                self.print_results(squashed_search_result, True)
+                print(f"\n")
+            vector_results.extend(squashed_search_result)
+
+        max_similarity_score = max([item.vector_score for item in vector_results])
 
         bm25_results: List[SearchResult] = []
         for query in query_bm25:
-            bm25_results.extend(self.bm25_search(query, limit - 5))
+            search_result = self.bm25_search(query, limit - 5)
 
-        # Combine and re-rank results
-        combined_results = CombinedSearchResults()
+            # let's normalize bm25 scores
+            for result in search_result:
+                result.bm25_score = result.bm25_score * max_similarity_score
 
+            # This tries to squash similar results together.
+            # Nearby results which are similar should be safe to process later together.
+            squashed_search_result = self.squash_nearby_results(search_result)
+            if self.logger.level == logging.DEBUG:
+                print(f"After squashing:")
+                self.print_results(squashed_search_result, False)
+                print(f"\n")
+            bm25_results.extend(squashed_search_result)
+
+        # Now we try to merge both vector and bm25 lists together.
+        combined_results: List[SearchResult] = []
         for result in vector_results:
-            class_info = self.knowledge_store.get_class_description(result.full_classname)
-            combined_results.merge_search_result(result, class_info)
-            combined_results.add_vector_result(result.full_classname, result.vector_score)
+            self.merge_hybrid_result(combined_results, result)
 
         for result in bm25_results:
-            class_info = self.knowledge_store.get_class_description(result.full_classname)
-            combined_results.merge_search_result(result, class_info)
-            combined_results.add_bm25_result(result.full_classname, result.bm25_score)
+            self.merge_hybrid_result(combined_results, result)
+        
+        for result in combined_results:
+            result.calculate_total_score()
 
-        sorted_results = combined_results.get_sorted_results()
+        sorted_results = sorted(combined_results, key=lambda x: x.total_score, reverse=True)
 
-        for idx, item in enumerate(sorted_results):
-            self.logger.debug(f"{idx}.{item.total_score}: {item.describe_content()}")
+        if self.logger.level == logging.DEBUG:
+            entries_log = "All results combined:"
+            for idx, search_result in enumerate(sorted_results):
+                entries_log += f"\n{idx}. {round(search_result.total_score, 3)}: {search_result.describe_content_compact()}"
+            print(entries_log)
 
-        return sorted_results
+        results_no_duplicates = self.squash_duplicates(sorted_results)
+
+        for result in results_no_duplicates:
+            result.calculate_total_score()
+        
+        entries_log = "\nHybrid search sorted results:"
+        for idx, search_result in enumerate(results_no_duplicates):
+            if self.logger.level == logging.DEBUG:
+                entries_log += f"\n{idx}. {round(search_result.total_score, 3)}: {search_result.describe_content_compact()}"
+            else:
+                entries_log += f"\n{idx}. {round(search_result.total_score, 3)}: {search_result.describe_content_compact()}"
+
+        print(entries_log)
+        print("\n")
+
+        return results_no_duplicates
+
+    def squash_nearby_results(self, original_results: List[SearchResult]) -> List[SearchResult]:
+        output_results: List[SearchResult] = []
+        last_squashed: SearchResult = None
+        last_last_squashed: SearchResult = None
+        for result in original_results:
+            if last_squashed is not None and result.full_classname == last_squashed.full_classname:
+                last_squashed.bm25_score = max(last_squashed.bm25_score, result.bm25_score)
+                last_squashed.vector_score = max(last_squashed.vector_score, result.vector_score)
+                last_squashed.rerank_score = max(last_squashed.rerank_score, result.rerank_score)
+                last_squashed.calculate_total_score()
+                last_squashed.merge_search_result(result.details)
+            elif last_last_squashed is not None and result.full_classname == last_last_squashed.full_classname:
+                last_last_squashed.bm25_score = max(last_last_squashed.bm25_score, result.bm25_score)
+                last_last_squashed.vector_score = max(last_last_squashed.vector_score, result.vector_score)
+                last_last_squashed.rerank_score = max(last_last_squashed.rerank_score, result.rerank_score)
+                last_last_squashed.merge_search_result(result.details)
+                last_last_squashed.calculate_total_score()
+            else:
+                last_last_squashed = last_squashed
+                last_squashed = result
+                output_results.append(last_squashed)
+        return output_results
     
-    def rerank_results(self, sorted_results: List[SearchResult], query: str, rerank_limit: int = 100) -> List[SearchResult]:
+    def squash_duplicates(self, original_results: List[SearchResult]) -> List[SearchResult]:
+        output_results: List[SearchResult] = []
+        for item in original_results:
+            already_in_output = False
+            for existing_result in output_results:
+                
+                is_existing_better_or_equal = item.is_better_or_equal(existing_result)
+
+                if is_existing_better_or_equal:
+                    already_in_output = True
+                    existing_result.bm25_score = max(existing_result.bm25_score, item.bm25_score)
+                    existing_result.vector_score = max(existing_result.vector_score, item.vector_score)
+                    existing_result.rerank_score = max(existing_result.rerank_score, item.rerank_score)
+                    existing_result.calculate_total_score()
+
+            if not already_in_output:
+                output_results.append(item)
+
+        return output_results
+
+    def print_results(self, sorted_results: List[SearchResult], vector: bool):
+        for idx, item in enumerate(sorted_results):
+            print(f"{idx}. {round(item.vector_score if vector else item.bm25_score, 3)}: {item.describe_content_compact()}")
+
+    def merge_hybrid_result(self, combined_results: List[SearchResult], result: SearchResult):
+        already_present = False
+        for existing_result in combined_results:
+            is_existing_better_or_equal = result.is_better_or_equal(existing_result)
+
+            if is_existing_better_or_equal:
+                existing_result.vector_score = max(result.vector_score, existing_result.vector_score)
+                existing_result.bm25_score = max(result.bm25_score, existing_result.bm25_score)
+                existing_result.rerank_score = max(result.rerank_score, existing_result.rerank_score)
+                existing_result.calculate_total_score()
+                already_present = True
+
+        if not already_present:
+            combined_results.append(result)
+
+    def is_equal(self, result: SearchResult, other_result: SearchResult):
+        entry_equal = False
+        if result.full_classname == other_result.full_classname:
+            if len(result.details) == 0 and len(other_result.details) == 0:
+                entry_equal = True
+
+            if len(result.details) >= 1 and len(other_result.details) >= 1 and result.details[0].getName() == other_result.details[0].getName():
+                entry_equal = True
+        return entry_equal
+    
+    def rerank_results(self, sorted_results: List[SearchResult], query: str, rerank_limit: int = 100, rerank_result_limit = 30) -> List[SearchResult]:
         if self.reranker.isEnabled():
-            results = sorted_results[-rerank_limit:]
+            results = sorted_results[:rerank_limit]
 
-            print("\nReranking...")
+            query = f"{query}"
+            print(f"\nReranking with query: '{query}'...")
             for idx, item in enumerate(results):
-                print(f"{idx}. {item.full_classname}")
-                self.logger.debug(f"{idx}.{item.total_score}:\n{item.describe_content()}\n")
+                if self.logger.level != logging.DEBUG:
+                    print(f"{idx}. {item.describe_content_compact()}")
+                else:
+                    print(f"\n{idx}. {item.describe_content()}")
 
-            docs_to_rerank = [res.describe_content() for res in results]
+            docs_to_rerank = [res.describe_content_rerank() for res in results]
             
             instruction = "Given a user query, score documents of class summaries that are relevant to the query"
             rerank_scores = self.reranker.rerank(query, docs_to_rerank, instruction=instruction)
@@ -209,10 +331,10 @@ class KnowledgeSearch:
 
             results = sorted(results, key=lambda x: x.rerank_score, reverse=True)
 
-            results_limited = results #[x for x in results if x.rerank_score > 0.0001]
-            print("\nFinal reranking results:")
+            results_limited = results[:rerank_result_limit]
+            print("Final reranking results:")
             for idx, item in enumerate(results_limited):
-                print(f"{idx}. {round(item.rerank_score, 3)}: {item.full_classname}")
+                print(f"{idx}. {round(item.rerank_score, 3)}: {item.describe_content_compact()}")
             print("")
 
             return results_limited

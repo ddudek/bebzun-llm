@@ -9,7 +9,7 @@ from core.utils.file_manager import FileManager
 class GetFileContentTool:
     name: str = "read_file"
     description: str = (
-        "Gets the content of a specific file in the specified directory.\n"
+        "Gets the content of a specific file in the specified directory. Use only if the full file content is not already provided to you.\n"
         "Parameters:\n"
         "- path (required): Provide a relative path to the file.\n"
         "Example:\n"
@@ -52,7 +52,7 @@ class GetFileContentTool:
             full_path = os.path.normpath(os.path.join(self.base_path, path))
             
             # Security check: ensure the requested path is within one of the allowed source directories
-            is_allowed = self.file_manager.is_allowed(self.base_path, path)
+            is_allowed = self.file_manager.is_allowed(path)
             
             if not is_allowed:
                 self.logger.error(f"Safety check failed: Path is not within allowed source directories")

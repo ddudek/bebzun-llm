@@ -423,7 +423,7 @@ def process_embeddings(base_dir: str = None, is_update: bool = False) -> None:
                 filecontext_class += f"{question}\n"
         
         summary_class = f"{class_summary.summary}"
-        text_to_embed = f"{summary_class}\n{filecontext_class}" if filecontext_class else summary_class
+        text_to_embed = f"Summary of a `{class_summary.full_classname}` class implemented in a {rel_path} file: {summary_class}\n{filecontext_class}" if filecontext_class else summary_class
 
         embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
 
@@ -449,7 +449,7 @@ def process_embeddings(base_dir: str = None, is_update: bool = False) -> None:
                 for feature in class_summary.features:
                     filecontext_method += f"{feature}\n"
             
-            summary_method = f"Method `{method.method_name}` of a `{class_summary.simple_classname}`: {method.method_summary}"
+            summary_method = f"Method `{method.method_name}` of a `{class_summary.simple_classname}` class implemented in a {rel_path} file: {method.method_summary}"
             text_to_embed = f"{summary_method}\n{filecontext_method}" if filecontext_method else summary_method
             embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
             documents_to_embed.append(text_to_embed)
@@ -470,7 +470,7 @@ def process_embeddings(base_dir: str = None, is_update: bool = False) -> None:
                 for feature in class_summary.features:
                     filecontext_property += f"{feature}\n"
 
-            summary_property = f"Property `{property.property_name}` of a `{class_summary.simple_classname}` class: {property.property_summary}"
+            summary_property = f"Property `{property.property_name}` of a `{class_summary.simple_classname}` class implemented in a {rel_path} file: {property.property_summary}"
             text_to_embed = f"{summary_property}\n{filecontext_property}" if filecontext_property else summary_property
             embedding_version = calc_embedd_version(class_summary_extended, text_to_embed)
             documents_to_embed.append(text_to_embed)
