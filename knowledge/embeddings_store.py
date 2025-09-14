@@ -64,6 +64,14 @@ class Embeddings:
         """Check if the embeddings data is loaded"""
         return self.data is not None
 
+    def remove_embeddings(self, classname: str):
+        entries_to_remove = []
+        for key in self.data.keys():
+            if classname in key:
+                entries_to_remove.append(key)
+        for key in entries_to_remove:
+            del self.data[key]
+
     def generate_documents_embedding(self, texts: List[str]) -> List[List[float]]:
         """
         Generate document embeddings using the configured execution method

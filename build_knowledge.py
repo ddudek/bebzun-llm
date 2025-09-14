@@ -91,7 +91,7 @@ def format_prompt(prompt_params: dict, prompt_template: str, filename, fileext, 
         ignore_packages = prompt_params["ignore_packages"]
         )
 
-def get_dependency_files(rel_path: str, dependency_files_with_priority: dict) -> List[tuple[str, int]]:
+def calc_priority_for_dependency_files(rel_path: str, dependency_files_with_priority: dict) -> List[tuple[str, int]]:
     """
     Extract dependency files from a given file and return them with priority information.
     
@@ -282,19 +282,19 @@ def process_summaries_for_files(
     """
     # Build a dependency graph for all files
     file_info_map = {f.filepath: f for f in file_manager.file_infos}
-    dependency_files_with_priority = {}
+    priorities_for_dependency_files = {}
     
     include_dependencies_first = True
-    # First, collect all dependencies for each file
+    # First, collect all dependencies for each file and calc its priorities
     for file_info in file_manager.file_infos:
-        if file_info.is_allowed_by_filter:
+        if file_info.is_allowed_by_filter or is_update_only:
             rel_path = file_info.filepath
-            dependency_files_with_priority[rel_path] = 0
+            priorities_for_dependency_files[rel_path] = 0
             if include_dependencies_first:
-                get_dependency_files(rel_path, dependency_files_with_priority)
+                calc_priority_for_dependency_files(rel_path, priorities_for_dependency_files)
 
     # Convert to list of tuples and sort by priority (highest first)
-    files_to_process_pre = [(file, priority) for file, priority in dependency_files_with_priority.items()]
+    files_to_process_pre = [(file, priority) for file, priority in priorities_for_dependency_files.items()]
     files_to_process_pre.sort(key=lambda x: x[1], reverse=True)
     
     # List to collect all class summaries
@@ -304,52 +304,78 @@ def process_summaries_for_files(
     only_missing = not is_force
     log_message_files = ""
 
-    for file in files_to_process_pre:
-        file_path = file[0]
-        file_priority = file[1]
-        if file_path not in file_info_map:
-            continue
+    if is_update_only:
+        existing_classes = set()
+        new_classes = set()
+        removed_classes = set()
+
+        all_previous_entries = set(knowledge_store.descriptions_dict.keys())
+        all_new_entries = set(knowledge_store.class_structure_dict.keys())
         
-        file_info = file_info_map[file_path]
+        new_classes = set(all_new_entries - all_previous_entries)
+        removed_classes = set(all_previous_entries - all_new_entries)
+        existing_classes = set(all_new_entries - new_classes - removed_classes)
+        
+        existing_modified_files = set()
 
-        old_classes = knowledge_store.get_file_description(file_path)
+        for deleted_classname in removed_classes:
+            knowledge_store.remove_class_description(deleted_classname)
+            embeddings.remove_embeddings(deleted_classname)
 
-        classes_in_file = knowledge_store.get_file_structure(file_path)
+        for cls in new_classes:
+            cls_new = knowledge_store.get_class_structure(cls)
+            if cls_new:
+                existing_modified_files.add(cls_new.source_file)
 
-        is_missing_classes = len(classes_in_file) > len(old_classes)
-
-        file_to_process = None
-        if file_manager.is_filtering_enabled:
-            if only_missing:
-                if is_missing_classes and file_info.is_allowed_by_filter:
-                    file_to_process = file_info
-                    
-            else:
-                if file_info.is_allowed_by_filter:
-                    file_to_process = file_info
-
-        elif not old_classes or not only_missing:
-            file_to_process = file_info
-
-        # Check update only (only files that were modified)
-        if is_update_only and file_to_process:
-            allowed = False
-            classes_in_file = knowledge_store.get_file_structure(file_path)
-            if classes_in_file and not old_classes:
-                allowed = True
-
-            for cl in classes_in_file:
-                old_description = knowledge_store.get_class_description_extended(cl.full_classname)
-                if old_description and old_description.version != cl.version:
-                    allowed = True
-
-            if not allowed:
-                file_to_process = None
-
-        if file_to_process:
-            files_to_process.append(file_to_process)
-            log_message_files += f"\n- {file_path}, Priority: {file_priority}"
+        for cls in existing_classes:
+            cls_old = knowledge_store.get_class_description_extended(cls)
+            cls_new = knowledge_store.get_class_structure(cls)
             
+            prev_version = cls_old.version if cls_old else -1
+            new_version = cls_new.version if cls_new else -1
+
+            if cls_new and prev_version != new_version:
+                existing_modified_files.add(cls_new.source_file)
+
+        for file in files_to_process_pre:
+            file_path = file[0]
+
+            if file_path in existing_modified_files:
+                file_info = file_info_map[file_path]
+                files_to_process.append(file_info)
+    else :
+        for file in files_to_process_pre:
+            file_path = file[0]
+            file_priority = file[1]
+            if file_path not in file_info_map:
+                continue
+            
+            file_info = file_info_map[file_path]
+
+            old_classes = knowledge_store.get_file_description(file_path)
+
+            classes_in_file = knowledge_store.get_file_structure(file_path)
+
+            is_missing_classes = len(classes_in_file) > len(old_classes)
+
+            file_to_process = None
+            if file_manager.is_filtering_enabled:
+                if only_missing:
+                    if is_missing_classes and file_info.is_allowed_by_filter:
+                        file_to_process = file_info
+                        
+                else:
+                    if file_info.is_allowed_by_filter:
+                        file_to_process = file_info
+
+            elif not old_classes or not only_missing:
+                file_to_process = file_info
+
+            if file_to_process:
+                files_to_process.append(file_to_process)
+
+    for file_to_process in files_to_process:
+        log_message_files += f"\n- {file_to_process.filepath}"
 
     logger.info(f"Files after limiting:\n {log_message_files}")
     
@@ -363,9 +389,6 @@ def process_summaries_for_files(
 
     for i, file_info in enumerate(files_to_process):
         rel_path = file_info.filepath
-        
-        dependency_files_with_priority_single = get_dependency_files(rel_path, {})
-        dependency_files = set(df for df, _ in dependency_files_with_priority_single)
         
         process_summary_for_file(rel_path,
                                path_final_db,

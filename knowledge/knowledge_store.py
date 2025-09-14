@@ -74,6 +74,9 @@ class KnowledgeStore:
         storage_obj = self.descriptions_dict.get(classname)
         return storage_obj.class_summary if storage_obj else None
     
+    def remove_class_description(self, classname: str):
+        del self.descriptions_dict[classname]
+    
     def get_class_description_extended(self, classname: str) -> Optional[ClassDescriptionExtended]:
         """
         Retrieve stored final class information by classname
