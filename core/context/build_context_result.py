@@ -21,7 +21,7 @@ class BuildContextGetFilesLLMResult(BaseModel):
     
     files_to_open: List[str] = Field(description="List of file paths to open")
     additional_search_area: Optional[AffectedArea] = Field(description="Additional search area to find more knowledge or classes")
-    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task")
+    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task (do not remove classes that add some context to the related code)")
     explanation_why_classes_not_related: str = Field(description="Explain your response from \"classes_not_related\"")
 
 
@@ -31,4 +31,4 @@ class BuildContextStep3(BaseModel):
     files_to_open: List[str] = Field(description="List of file paths to open")
     additional_search_area: Optional[AffectedArea] = Field(description="Additional search area to find more knowledge or classes (optional)")
     finish_summary: str = Field(description="Summary of the finished result")
-    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task")
+    classes_not_related: List[str] = Field(description="List of full classname that are not related at all to the user task (do not remove classes that add some context to the related code)")

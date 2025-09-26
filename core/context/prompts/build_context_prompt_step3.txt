@@ -24,7 +24,7 @@ Option1: "Get more information":
 Please provide:
 - files_to_open: Additinal files to open, provide a list of "File with implementation". Leave empty list if not needed.
 - additional_search_area: Additional search area to find more knowledge or classes (Vector similarity queries with semantic intent and natural language questions, and bm25 keyword search).
-- classes_not_related: List of classes in memory that are completely not related to the user task (important!).
+- classes_not_related: List of classes in memory that are completely not related to the user task (important! do not remove classes that add some context to the related code).
 - finish_summary: empty.
 
 Option2: "Finish summary"
@@ -32,6 +32,6 @@ Please provide:
 - files_to_open: Empty list, e.g. "[]"
 - additional_search_area: Empty, e.g. "null"
 - finish_summary: Your summary of the given files about the user task. Explain why is this enough to finish the task. Include code snippets quoted from the code files (do not provide your own code snippets).
-- classes_not_related: List of classes in memory that are completely not related to the user task (important!).
+- classes_not_related: List of classes in memory that are completely not related to the user task (important! do not remove classes that add some context to the related code).
 
 User task: "{user_task}"

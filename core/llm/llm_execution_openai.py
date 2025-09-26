@@ -17,7 +17,7 @@ class OpenAILlmExecution:
         return
 
     def model_desc(self) -> str:
-        return f"openai/{self.model}"
+        return f"{self.base_url}, {self.model}"
 
     def llm_invoke(self, system_prompt: str, prompt: str, schema):
         user_prompt_content = f"""Respond in JSON format. Only output valid JSON, do not include any explanations or markdown formatting. Ensure all required fields are included.

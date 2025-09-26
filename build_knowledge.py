@@ -324,6 +324,12 @@ def process_summaries_for_files(
 
         for cls in new_classes:
             cls_new = knowledge_store.get_class_structure(cls)
+            cls_old = knowledge_store.get_file_description(cls_new.source_file)
+            if cls_old:
+                file = knowledge_store.get_class_description_extended(cls_old[0].full_classname)
+                if file and file.version == cls_new.version:
+                    continue
+
             if cls_new:
                 existing_modified_files.add(cls_new.source_file)
 
@@ -398,6 +404,20 @@ def process_summaries_for_files(
         processed_counter += 1
 
     logger.info(f"All files processed in dependency order")
+
+    if is_update_only:
+        # removing old classes summaries from knowledge store...
+        # TODO: implement...
+
+        # remove non-existing classes from embeddings
+        for full_classname in [doc.full_classname for doc in embeddings.get_all_documents().values()]:
+            class_info = knowledge_store.get_class_description(full_classname)
+            if not class_info:
+                embeddings.remove_embeddings(full_classname)
+                print (f"Warn: no description found for embedding entry: {full_classname}")
+                continue
+        
+        embeddings.store_all_classes()
     
     # Return the collected summaries
     return all_class_summaries
@@ -406,7 +426,6 @@ def process_embeddings(base_dir: str = None, is_update: bool = False) -> None:
     """
     Process embeddings for all classes in storage.final_process
     """
-    embeddings.initialize(base_dir, create=(not is_update))
 
     total_classes = len(knowledge_store.descriptions_dict)
     logger.info(f"Processing {total_classes} classes for embeddings")
@@ -645,6 +664,8 @@ def main():
         logger.info("=== Running Final processing ===")
         knowledge_store.read_storage_final(path_final_db, base_dir)
 
+        if is_update_only:
+            embeddings.initialize(base_dir, create=(not is_update_only))
 
         # Process with memory and get all class summaries
         class_summaries_final = process_summaries_for_files(
@@ -671,6 +692,7 @@ def main():
     if run_embeddings:
         logger.info("=== Running Embeddings processing ===")
         is_update = is_update_only or file_manager.is_filtering_enabled
+        embeddings.initialize(base_dir, create=(not is_update))
         process_embeddings(base_dir=base_dir, is_update = is_update)
 
     logger.info("\nSummary generation complete!")

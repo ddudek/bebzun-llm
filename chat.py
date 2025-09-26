@@ -145,7 +145,7 @@ def main():
     messages: List[BaseMessage] = []
 
     user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
-    user_single_shot_question = args.single_shot.strip() if args.single_shot else None
+    user_single_shot_question = get_followup_prompt(args.single_shot) if args.single_shot else None
     file_output = Path(args.output) if args.output else None
 
     user_input = user_initial_input
@@ -160,6 +160,7 @@ def main():
         llm_execution.on_load()
     
     tool_observation_flag = False
+    response_content_cleaned = ""
 
     # LLM steps loop
     try:
@@ -181,35 +182,48 @@ def main():
                 if user_input.startswith('\\'):
                     user_input = user_input.replace('\\','/')
                 
-                if user_input.startswith('/add '):
+                if user_input.lower().startswith('/add '):
                     query = user_input[5:]
                     if query:
                         add_class_memory(chat_state, query, input_dir, knowledge)
                     skip_ai = True
 
-                if user_input.startswith('/remove '):
+                if user_input.lower().startswith('/file '):
+                    query = user_input[6:]
+                    if query:
+                        add_file_memory(chat_state, query, input_dir, file_manager)
+                    skip_ai = True
+
+                if user_input.lower().startswith('/remove '):
                     query = user_input[9:]
                     if query:
                         remove_class_memory(chat_state, query, input_dir, knowledge)
                     skip_ai = True
 
-                if user_input.startswith('/del '):
+                if user_input.lower().startswith('/del '):
                     count = int(user_input[5:])
                     if count > 0:
                         del messages[-count:]
                         print(messages)
                     skip_ai = True
 
-                if user_input.startswith('/list'):
+                if user_input.lower().startswith('/list'):
                     print("\n".join(f"- {type(message).__name__}:" + message.content[:60].replace('\n', '') + "..." for message in messages))
                     skip_ai = True
 
-                if user_input.startswith('/memory'):
+                if user_input.lower().startswith('/memory'):
                     print(f"Memory:\n{chat_state.memory.get_formatted_memory_compact()}")
                     skip_ai = True
 
-                if user_input.startswith('/memory-full'):
+                if user_input.lower().startswith('/memory-full'):
                     print(f"Memory:\n{chat_state.memory.get_formatted_memory()}")
+                    skip_ai = True
+
+                if user_input.lower().startswith('/save '):
+                    file = user_input[6:]
+                    if file:
+                        file_path = Path(file)
+                        save_last_message(chat_state, file_path, response_content_cleaned)
                     skip_ai = True
                 
                 if not user_input:
@@ -265,20 +279,24 @@ def main():
 
                     logger.error(error_message)
 
-            if file_output and tool_observation_flag == False or tool_used_counter > 3:
+            if file_output is not None and (tool_observation_flag == False or tool_used_counter > 3):
                 # use response_content_cleaned and save to file_output
-                file_output.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with open(file_output, 'w', encoding='utf-8') as f:
-                        memory = chat_state.memory.get_formatted_memory_compact()
-                        f.write(f"{response_content_cleaned}\n\n*** Response generated with this context: ***\n{memory}")
-                except Exception:
-                    sys.exit(1)
+                save_last_message(chat_state, file_output, response_content_cleaned)
 
                 sys.exit(0)
 
     except Exception:
         logger.exception("Error occurred:")
+
+def save_last_message(chat_state: ChatState, file_output: Path, response_content_cleaned):
+    file_output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(file_output, 'w', encoding='utf-8') as f:
+            memory = chat_state.memory.get_formatted_memory()
+            memory_compact = chat_state.memory.get_formatted_memory_compact()
+            f.write(f"{response_content_cleaned}\n\n*** Response generated with this context: ***\n{memory_compact}\n\n\n*** Response generated with this context: ***\n{memory}")
+    except Exception:
+        sys.exit(1)
 
 
 def get_system_prompt(tools: List[Any], input_dir: str) -> str:
@@ -295,6 +313,22 @@ def get_system_prompt(tools: List[Any], input_dir: str) -> str:
         project_context=project_context_val,
         tools_description=tools_description
     )
+
+
+def get_followup_prompt(arg: str) -> str:
+    is_file = False
+    try: 
+        is_file = os.path.exists(Path(arg))
+    except:
+        is_file = False
+
+    if is_file:
+        prompt_path = os.path.join("interact", "chat", "follow_up_tickets.txt")
+        with open(prompt_path, "r") as f:
+            prompt = f.read()
+        return prompt
+    
+    return arg
 
 def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, tools, input_dir: str) -> List[Dict[str, Any]]:
     """Concatenates a list of agent message objects to a short list with a single memory state."""
@@ -362,12 +396,35 @@ def add_class_memory(chat_state: ChatState, query: str, input_dir: str, knowledg
         file_size = os.path.getsize(abs_file_path)
 
         result = SearchResult(
-                    entry = None,
+                    full_classname = class_info.class_summary.full_classname,
+                    file = class_info.file,
                     details = [],
                     class_description = class_info.class_summary
                 )
         
         chat_state.memory.add_search_result(result, class_info.file, file_size)
+
+def add_file_memory(chat_state: ChatState, query: str, input_dir: str, file_manager: FileManager):
+    file_infos = [name for name in file_manager.get_all_supported_files(only_filtered=False) if query in name]
+
+    for file_info in file_infos:
+        if file_info:
+
+            # raw_input returns the empty string for "enter"
+            yes = {'yes','y', 'ye', ''}
+            no = {'no','n'}
+
+            choice = input(f"Add: `{file_info}?` [Y/n]").lower()
+            if choice in yes:
+            
+                abs_file_path = os.path.join(input_dir, file_info)
+                file_size = os.path.getsize(abs_file_path)
+
+                with open(abs_file_path, 'r', encoding='utf-8', errors='replace') as file:
+                    content = file.read()
+                
+                chat_state.memory.add_file(abs_file_path, content, input_dir)
+                print(f"Added file to memory: {file_info}")
 
 def remove_class_memory(chat_state: ChatState, query: str, input_dir: str, knowledge: KnowledgeStore):
     result = chat_state.memory.remove_class_memory(query)
