@@ -182,6 +182,9 @@ def main():
                 if user_input.startswith('\\'):
                     user_input = user_input.replace('\\','/')
                 
+                if user_input.startswith('/'):
+                    skip_ai = True
+                
                 if user_input.lower().startswith('/add '):
                     query = user_input[5:]
                     if query:

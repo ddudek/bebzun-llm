@@ -12,7 +12,7 @@ class FileManager:
         self.file_infos: List[FileInfo] = []
         self.source_dirs: List[str] = []
         self.exclude: List[str] = []
-        self.extensions: tuple[str] = ()
+        self.extensions: List[str] = []
         self.is_filtering_enabled = False
 
     def load(self, logger: Logger, base_dir: str, config: Config, name_filter: str):
@@ -37,7 +37,7 @@ class FileManager:
                 
             for root, _, files in os.walk(abs_src_path):
                 for file_path in files:
-                    if file_path.endswith(self.extensions):
+                    if file_path.endswith(tuple(self.extensions)):
                         abs_file_path = os.path.join(root, file_path)
                         rel_file_path = os.path.relpath(abs_file_path, base_dir)
                         file_size = os.path.getsize(abs_file_path)
