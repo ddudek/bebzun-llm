@@ -30,14 +30,37 @@ from bebzun_llm.core.utils.logging_utils import setup_logging, setup_llm_logger
 from bebzun_llm.core.context.build_context import BuildContext
 
 def main():
-    parser = argparse.ArgumentParser(description='Chat with Ollama model with file listing and embeddings search capabilities.')
-    parser.add_argument('-i', '--input-dir', required=True, help='Directory to list files from. Overrides config file.')
-    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
-    parser.add_argument('--log-file', help='Path to the log file.')
-    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
-    parser.add_argument('-p', '--prompt', help='User task to generate context.')
-    parser.add_argument('-ss', '--single-shot', help='User prompt for single shot answer.')
-    parser.add_argument('-o', '--output', help='Output file for single-shot answer')
+    parser = argparse.ArgumentParser(
+        description='Chat with LLM model with file listing and embeddings search capabilities.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Start chat in current directory
+  %(prog)s
+
+  # Start chat in specific directory
+  %(prog)s -i /path/to/project
+
+  # Single-shot question with output to file
+  %(prog)s -ss "Explain the architecture" -o output.txt
+
+  # Start with initial prompt
+  %(prog)s -p "Help me understand the authentication flow"
+        """
+    )
+    parser.add_argument('-i', '--input-dir',
+                        help='Directory to list files from. Defaults to current directory.')
+    parser.add_argument('-p', '--prompt',
+                        help='User task to generate context.')
+    parser.add_argument('-ss', '--single-shot',
+                        help='User prompt for single shot answer.')
+    parser.add_argument('-o', '--output',
+                        help='Output file for single-shot answer')
+    parser.add_argument('--log-level', default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Set the logging level (default: INFO)')
+    parser.add_argument('--log-file', help='Path to the log file')
+    parser.add_argument('--llm-log-file', help='Path to the LLM log file')
 
     args = parser.parse_args()
     
@@ -46,11 +69,31 @@ def main():
     logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
     llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
 
-    # Determine input directory    
-    input_dir = os.path.abspath(args.input_dir)
+    # Determine input directory - default to current directory if not specified
+    input_dir = os.path.abspath(args.input_dir if args.input_dir else os.getcwd())
+    
+    # Validate directory exists
+    if not os.path.exists(input_dir):
+        print(f"\nError: Directory '{input_dir}' does not exist.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
+    
+    if not os.path.isdir(input_dir):
+        print(f"\nError: '{input_dir}' is not a directory.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
+    
+    # Check for config file
+    config_file_path = os.path.join(input_dir, ".ai-agent", "config.json")
+    
+    if not os.path.exists(config_file_path):
+        print(f"\nError: Configuration file not found at '{config_file_path}'.", file=sys.stderr)
+        print(f"Please ensure you are running this command from a project directory", file=sys.stderr)
+        print(f"or use the -i parameter to specify the project directory.\n", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
     
     # Load configuration
-    config_file_path = os.path.join(input_dir, ".ai-agent", f"config.json")
     config = load_config(config_file_path)
 
     # Initialize LLM execution

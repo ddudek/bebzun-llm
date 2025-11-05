@@ -546,20 +546,45 @@ llm_execution = None
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Generate summaries for files in a directory.')
-    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
-    parser.add_argument('--log-file', help='Path to the log file.')
-    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
-    parser.add_argument('-i', '--input-dir', help='Directory containing files to summarize. Overrides config file.')
-    
+    parser = argparse.ArgumentParser(
+        description='Generate summaries for files in a directory.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Process project in the current directory (all stages: Pre, Final, Embedd)
+  %(prog)s
+
+  # Process project under specific directory
+  %(prog)s -i /path/to/project
+
+  # Run only preprocessing stage
+  %(prog)s -m Pre
+
+  # Run only final processing stage with force reprocessing
+  %(prog)s -m Final --force
+
+  # Update only files matching filter
+  %(prog)s -f "Controller" --update
+
+  # Process with debug logging
+  %(prog)s --log-level DEBUG
+        """
+    )
+    parser.add_argument('-i', '--input-dir',
+                        help='Directory containing files to summarize and the configuration file. Defaults to current directory.')
     parser.add_argument('-m', '--mode', choices=['Pre', 'Final', 'Embedd'],
-                        help='Processing mode: Pre (TreeSitter preprocessing), Final (final process only), Embedd (embeddings only)')
-    
-    parser.add_argument('-f', '--filter', help='Filter files by name (only process files containing this string in filename). '
-                                        'Prefix with "!" to invert (exclude files containing the string)')
-    
-    parser.add_argument('-fo', '--force', action='store_true', help='Process even if already processed')
-    parser.add_argument('--update', action='store_true', help='Process even if already processed')
+                        help='Processing mode: Pre (TreeSitter preprocessing), Final (final process only), Embedd (embeddings only). Default: all stages')
+    parser.add_argument('-f', '--filter',
+                        help='Filter files by name (only process files containing this string in filename). Prefix with "!" to invert (exclude files containing the string)')
+    parser.add_argument('-fo', '--force', action='store_true',
+                        help='Force reprocessing even if already processed')
+    parser.add_argument('--update', action='store_true',
+                        help='Update mode: only process modified or new files')
+    parser.add_argument('--log-level', default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Set the logging level (default: INFO)')
+    parser.add_argument('--log-file', help='Path to the log file')
+    parser.add_argument('--llm-log-file', help='Path to the LLM log file')
     
     args = parser.parse_args()
 
@@ -569,10 +594,29 @@ def main():
     logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
     llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
 
-    # Determine input directory    
-    base_dir = os.path.abspath(args.input_dir)
+    # Determine input directory - default to current directory if not specified
+    base_dir = os.path.abspath(args.input_dir if args.input_dir else os.getcwd())
     
+    # Validate directory exists
+    if not os.path.exists(base_dir):
+        print(f"Error: Directory '{base_dir}' does not exist.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
+    
+    if not os.path.isdir(base_dir):
+        print(f"Error: '{base_dir}' is not a directory.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
+    
+    # Check for config file
     path_config = os.path.join(base_dir, ".ai-agent", file_config)
+    
+    if not os.path.exists(path_config):
+        print(f"\nError: Configuration file not found at '{path_config}'.", file=sys.stderr)
+        print(f"Please ensure you are running this command from a project directory", file=sys.stderr)
+        print(f"or use the -i parameter to specify the project directory.\n", file=sys.stderr)
+        sys.exit(1)
+    
     path_static_db = os.path.join(base_dir, ".ai-agent", file_static_db)
     path_final_db = os.path.join(base_dir, ".ai-agent", file_final_db)
 

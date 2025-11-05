@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include bebzun_llm *.txt
+recursive-include bebzun_llm *.json
+recursive-include bebzun_llm/core/context/prompts *.txt
+recursive-include bebzun_llm/knowledge/prompts *.txt
+recursive-include bebzun_llm/interact/chat *.txt

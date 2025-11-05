@@ -221,11 +221,34 @@ Based on all the information above (project context, file list, and class summar
 
 
 def main():
-    parser = argparse.ArgumentParser(description='CLI for querying codebase knowledge.')
-    parser.add_argument('-i', '--input-dir', required=True, help='Directory containing project and .ai-agent folder.')
-    parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help='Set the logging level.')
-    parser.add_argument('--log-file', help='Path to the log file.')
-    parser.add_argument('--llm-log-file', help='Path to the LLM log file.')
+    parser = argparse.ArgumentParser(
+        description='CLI for querying codebase knowledge.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Search for classes related to authentication
+  %(prog)s similarity_search "authentication flow"
+
+  # Search with specific directory
+  %(prog)s -i /path/to/project similarity_search "user management"
+
+  # BM25 keyword search
+  %(prog)s bm25_search "login controller" --limit 10
+
+  # Generate project summary
+  %(prog)s summarize_project
+
+  # Build context for a task
+  %(prog)s build_context "Explain how user authentication works"
+        """
+    )
+    parser.add_argument('-i', '--input-dir',
+                        help='Directory containing project and .ai-agent folder. Defaults to current directory.')
+    parser.add_argument('--log-level', default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Set the logging level (default: INFO)')
+    parser.add_argument('--log-file', help='Path to the log file')
+    parser.add_argument('--llm-log-file', help='Path to the LLM log file')
 
     subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
 
@@ -262,13 +285,29 @@ def main():
     logger = setup_logging(log_level=args.log_level, log_file=args.log_file)
     llm_logger = setup_llm_logger(log_level=args.log_level, log_file=args.llm_log_file)
 
-    input_dir = os.path.abspath(args.input_dir)
+    # Determine input directory - default to current directory if not specified
+    input_dir = os.path.abspath(args.input_dir if args.input_dir else os.getcwd())
+    
+    # Validate directory exists
+    if not os.path.exists(input_dir):
+        print(f"\nError: Directory '{input_dir}' does not exist.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
+    
+    if not os.path.isdir(input_dir):
+        print(f"\nError: '{input_dir}' is not a directory.", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
 
-    # Load configuration
+    # Check for config file
     config_file_path = os.path.join(input_dir, ".ai-agent", "config.json")
     if not os.path.exists(config_file_path):
-        logger.error(f"Error: Configuration file not found at {config_file_path}")
+        print(f"\nError: Configuration file not found at '{config_file_path}'.", file=sys.stderr)
+        print(f"Please ensure you are running this command from a project directory", file=sys.stderr)
+        print(f"or use the -i parameter to specify the project directory.\n", file=sys.stderr)
+        parser.print_help()
         sys.exit(1)
+    
     config = load_config(config_file_path)
 
     # Initialize components

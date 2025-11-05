@@ -137,9 +137,23 @@ This knowledge base can be used for various tasks, here explored:
 - **Vector-Based Search**: Find relevant code using natural language queries
 
 ## 1. Installation
+
+### From GitHub (Recommended)
 ```bash
-pip install -r requirements.txt
+# Install directly from GitHub
+pip install git+https://github.com/yourusername/codebase-knowledge-llm.git
+
+# Or clone and install in editable mode for development
+git clone https://github.com/yourusername/codebase-knowledge-llm.git
+cd codebase-knowledge-llm
+pip install -e .
 ```
+
+### From PyPI (Coming Soon)
+```bash
+pip install bebzun-llm
+```
+
 Make sure you have local Ollama, or MLX-LM setup.
 
 ## 2. Configuration
@@ -160,7 +174,7 @@ In `config.json` specify which directories contain your source code:
 ## 3. Build knowledge
 Create a knowledge database for your project:
 ```bash
-python build_knowledge.py -i /path/to/your/project
+bebzun_build_knowledge -i /path/to/your/project
 ```
 
 ### Step 1: Static Analysis
@@ -177,7 +191,7 @@ Database is created incrementally, using already processed files as a context fo
 
 You can also run this step manually by adding `-m Final` parameter:
 ```bash
-python build_knowledge.py -i /path/to/your/project -m Final [-f "MainActivity"]
+bebzun_build_knowledge -i /path/to/your/project -m Final [-f "MainActivity"]
 ```
 
 ### Step 3: Create embeddings for search
@@ -185,25 +199,25 @@ Creates and stores embeddings for each piece of knowledge.
 
 You can also run this step manually by adding `-m Embedd` parameter:
 ```bash
-python build_knowledge.py -i /path/to/your/project -m Embedd
+bebzun_build_knowledge -i /path/to/your/project -m Embedd
 ```
 
-### Step 2: Interaction
+### Step 4: Interaction
 The project is ready for interaction:
 
 Chat:
 ```bash
-python chat.py -i /path/to/your/project
+bebzun_chat -i /path/to/your/project
 ```
 
 CLI:
 
 ```bash
-cli.py [-h] -i INPUT_DIR [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--log-file LOG_FILE] [--llm-log-file LLM_LOG_FILE] {similarity_search,bm25_search,summarize_project}
+bebzun_cli [-h] -i INPUT_DIR [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--log-file LOG_FILE] [--llm-log-file LLM_LOG_FILE] {similarity_search,bm25_search,summarize_project}
 
-python cli.py -i /path/to/your/project similarity_search "Update status interval"
-python cli.py -i /path/to/your/project bm25_search "Update status interval"
-python cli.py -i /path/to/your/project summarize_project
+bebzun_cli -i /path/to/your/project similarity_search "Update status interval"
+bebzun_cli -i /path/to/your/project bm25_search "Update status interval"
+bebzun_cli -i /path/to/your/project summarize_project
 ```
 
 ## Output Files

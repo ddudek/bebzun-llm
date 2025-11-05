@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bebzun-llm"
+version = "0.1.0"
+description = "Generating codebase knowledge for LLMs through context engineering and pre-processing"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Daniel Dudek", email = "kontakt@ddudek.pl"}
+]
+maintainers = [
+    {name = "Daniel Dudek", email = "kontakt@ddudek.pl"}
+]
+keywords = ["llm", "codebase", "android", "kotlin", "knowledge", "rag", "static-analysis", "code-understanding"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.7"
+dependencies = [
+    "ollama",
+    "pydantic",
+    "tree-sitter",
+    "tree-sitter-kotlin",
+    "tree-sitter-java",
+    "tree-sitter-swift",
+    "rank_bm25",
+    "mlx-embeddings",
+    "mlx-lm",
+    "anthropic",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/danieldudek/codebase-knowledge-llm"
+Repository = "https://github.com/danieldudek/codebase-knowledge-llm"
+Issues = "https://github.com/danieldudek/codebase-knowledge-llm/issues"
+
+[project.scripts]
+bebzun_chat = "bebzun_llm.chat:main"
+bebzun_cli = "bebzun_llm.cli:main"
+bebzun_build_knowledge = "bebzun_llm.build_knowledge:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bebzun_llm*"]
+
+[tool.setuptools.package-data]
+"bebzun_llm" = ["**/*.txt", "**/*.json"]
+
+[tool.black]
+line-length = 88
+target-version = ['py37']
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
