@@ -53,7 +53,9 @@ Examples:
     parser.add_argument('-p', '--prompt',
                         help='User task to generate context.')
     parser.add_argument('-ss', '--single-shot',
-                        help='User prompt for single shot answer.')
+                        help='User text prompt for single shot answer.')
+    parser.add_argument('-ssf', '--single-shot-file',
+                        help='User prompt file for single shot answer.')
     parser.add_argument('-o', '--output',
                         help='Output file for single-shot answer')
     parser.add_argument('--log-level', default='INFO',
@@ -188,7 +190,7 @@ Examples:
     messages: List[BaseMessage] = []
 
     user_initial_input = args.prompt.strip() if args.prompt else input("\nYou: ").strip()
-    user_single_shot_question = get_followup_prompt(args.single_shot) if args.single_shot else None
+    user_single_shot_question = get_followup_prompt(args.single_shot_file) if args.single_shot_file else (args.single_shot if args.single_shot_file else None)
     file_output = Path(args.output) if args.output else None
 
     user_input = user_initial_input
@@ -348,7 +350,9 @@ def save_last_message(chat_state: ChatState, file_output: Path, response_content
 def get_system_prompt(tools: List[Any], input_dir: str) -> str:
     tools_description = "\n".join([f"## {t.name}\nDescription: {t.description}\n" for t in tools])
     
-    prompt_path = os.path.join("interact", "chat", "system_prompt.txt")
+    # Use __file__ to get the package directory and construct the absolute path
+    package_dir = Path(__file__).parent
+    prompt_path = package_dir / "interact" / "chat" / "system_prompt.txt"
     
     with open(prompt_path, "r") as f:
         prompt_template = f.read()
@@ -362,19 +366,22 @@ def get_system_prompt(tools: List[Any], input_dir: str) -> str:
 
 
 def get_followup_prompt(arg: str) -> str:
-    is_file = False
-    try: 
-        is_file = os.path.exists(Path(arg))
-    except:
-        is_file = False
-
-    if is_file:
-        prompt_path = os.path.join("interact", "chat", "follow_up_tickets.txt")
-        with open(prompt_path, "r") as f:
-            prompt = f.read()
-        return prompt
+    """
+    Load prompt from a file path.
+    Accepts both absolute and relative paths (relative to os.getcwd()).
+    """
+    # If the path is already absolute, use it as-is
+    # Otherwise, resolve it relative to the current working directory
+    if os.path.isabs(arg):
+        prompt_path = arg
+    else:
+        prompt_path = os.path.join(os.getcwd(), arg)
     
-    return arg
+    prompt_path = os.path.abspath(prompt_path)
+    
+    with open(prompt_path, "r") as f:
+        prompt = f.read()
+    return prompt
 
 def messages_to_llm_input(messages: List[BaseMessage], chat_state: ChatState, tools, input_dir: str) -> List[Dict[str, Any]]:
     """Concatenates a list of agent message objects to a short list with a single memory state."""
